@@ -17,9 +17,19 @@ import {
 import { UploadOutlined, PictureOutlined, EyeOutlined, CloseOutlined } from '@ant-design/icons';
 import { imageApi, MediaItem, MediaDetail } from '../services/api';
 import { useUploadStore } from '../stores';
+import UnifiedTaskMonitor from '../components/UnifiedTaskMonitor';
 import ReactMarkdown from 'react-markdown';
 
 const { Text } = Typography;
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+// 获取完整图片URL
+const getFullImageUrl = (url: string) => {
+  if (!url) return '';
+  if (url.startsWith('http')) return url;
+  return `${API_BASE_URL}${url}`;
+};
 
 const ImagesPage: React.FC = () => {
   const [images, setImages] = useState<MediaItem[]>([]);
@@ -29,7 +39,7 @@ const ImagesPage: React.FC = () => {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewImage, setPreviewImage] = useState('');
   
-  const { addTask, updateUploadProgress, startAnalyzing, updateAnalyzingProgress, completeTask, failTask } = useUploadStore();
+  const { addTask, updateUploadProgress, startAnalyzing, updateAnalyzingProgress, completeTask, failTask, setPanelOpen } = useUploadStore();
 
   // 加载图片列表
   const loadImages = useCallback(async () => {
@@ -51,6 +61,9 @@ const ImagesPage: React.FC = () => {
 
   // 处理图片上传（三阶段进度：上传 → AI分析 → 完成）
   const handleUpload = async (file: File) => {
+    // 打开上传进度面板
+    setPanelOpen(true);
+    
     // 添加任务到上传队列
     const taskId = addTask({
       fileName: file.name,
@@ -161,9 +174,9 @@ const ImagesPage: React.FC = () => {
                       <div style={{ position: 'relative' }}>
                         <Image
                           alt="图片"
-                          src={img.url}
+                          src={getFullImageUrl(img.url)}
                           style={{ height: 200, objectFit: 'cover', cursor: 'pointer' }}
-                          onClick={() => handlePreview(img.url)}
+                          onClick={() => handlePreview(getFullImageUrl(img.url))}
                           preview={false}
                         />
                         {/* 删除按钮 - 右上角X号 */}
@@ -245,7 +258,7 @@ const ImagesPage: React.FC = () => {
         {selectedImage && (
           <div>
             <Image
-              src={selectedImage.url}
+              src={getFullImageUrl(selectedImage.url)}
               style={{ width: '100%', maxHeight: 400, objectFit: 'contain' }}
             />
             <Divider />
@@ -258,6 +271,9 @@ const ImagesPage: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {/* 统一任务监控面板 */}
+      <UnifiedTaskMonitor />
     </div>
   );
 };

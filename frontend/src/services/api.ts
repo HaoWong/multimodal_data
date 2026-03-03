@@ -3,7 +3,7 @@ import axios from 'axios';
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: `${API_BASE_URL}`,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -35,25 +35,25 @@ api.interceptors.response.use(
 export const documentApi = {
   // 创建文档
   createDocument: async (data: { title: string; content: string; doc_type?: string; metadata?: object }) => {
-    const response = await api.post('/documents/', data);
+    const response = await api.post('/api/documents/', data);
     return response.data;
   },
 
   // 获取文档列表
   getDocuments: async (skip: number = 0, limit: number = 100) => {
-    const response = await api.get(`/documents/?skip=${skip}&limit=${limit}`);
+    const response = await api.get(`/api/documents/?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 
   // 获取文档详情
   getDocument: async (id: string) => {
-    const response = await api.get(`/documents/${id}`);
+    const response = await api.get(`/api/documents/${id}`);
     return response.data;
   },
 
   // 搜索文档
   searchDocuments: async (query: string, topK: number = 5) => {
-    const response = await api.post('/documents/search', {
+    const response = await api.post('/api/documents/search', {
       query,
       top_k: topK,
     });
@@ -62,7 +62,7 @@ export const documentApi = {
 
   // 删除文档
   deleteDocument: async (id: string) => {
-    const response = await api.delete(`/documents/${id}`);
+    const response = await api.delete(`/api/documents/${id}`);
     return response.data;
   },
 
@@ -74,7 +74,7 @@ export const documentApi = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await api.post('/documents/upload', formData, {
+    const response = await api.post('/api/documents/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -112,19 +112,19 @@ export const chatApi = {
     use_rag?: boolean;
     history?: Array<{ role: string; content: string }>;
   }): Promise<{ response: string; sources: MessageSource[]; session_id: string }> => {
-    const response = await api.post('/chat', data);
+    const response = await api.post('/api/chat', data);
     return response.data;
   },
 
   // 获取会话列表
   getSessions: async (limit: number = 50) => {
-    const response = await api.get(`/chat/sessions?limit=${limit}`);
+    const response = await api.get(`/api/chat/sessions?limit=${limit}`);
     return response.data;
   },
 
   // 删除会话
   deleteSession: async (sessionId: string) => {
-    const response = await api.delete(`/chat/sessions/${sessionId}`);
+    const response = await api.delete(`/api/chat/sessions/${sessionId}`);
     return response.data;
   },
 
@@ -138,7 +138,7 @@ export const chatApi = {
     },
     callbacks: ChatStreamCallbacks
   ) => {
-    const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+    const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -212,7 +212,7 @@ export const imageApi = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await api.post('/images/upload', formData, {
+    const response = await api.post('/api/images/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -228,28 +228,25 @@ export const imageApi = {
 
   // 获取图片列表
   listImages: async (): Promise<MediaItem[]> => {
-    const response = await api.get('/images/');
+    const response = await api.get('/api/images/');
     return response.data;
   },
 
   // 获取图片详情
   getImageDetail: async (id: string): Promise<MediaDetail> => {
-    const response = await api.get(`/images/${id}`);
+    const response = await api.get(`/api/images/${id}`);
     return response.data;
   },
 
   // 搜索图片
   searchImages: async (query: string, topK: number = 5) => {
-    const response = await api.post('/images/search', {
-      query,
-      top_k: topK,
-    });
+    const response = await api.post(`/api/images/search?query=${encodeURIComponent(query)}&top_k=${topK}`);
     return response.data;
   },
 
   // 删除图片
   deleteImage: async (id: string) => {
-    const response = await api.delete(`/images/${id}`);
+    const response = await api.delete(`/api/images/${id}`);
     return response.data;
   },
 };
@@ -270,7 +267,7 @@ export const contentApi = {
     }
 
     try {
-      const response = await api.post('/contents/upload', formData, {
+      const response = await api.post('/api/contents/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -297,7 +294,7 @@ export const contentApi = {
 
   // 获取内容列表
   listContents: async (contentType?: string, skip: number = 0, limit: number = 100) => {
-    let url = `/contents/?skip=${skip}&limit=${limit}`;
+    let url = `/api/contents/?skip=${skip}&limit=${limit}`;
     if (contentType) url += `&content_type=${contentType}`;
     const response = await api.get(url);
     return response.data;
@@ -305,23 +302,21 @@ export const contentApi = {
 
   // 获取内容详情
   getContentDetail: async (id: string): Promise<MediaDetail> => {
-    const response = await api.get(`/contents/${id}`);
+    const response = await api.get(`/api/contents/${id}`);
     return response.data;
   },
 
   // 搜索内容
   searchContents: async (query: string, contentType?: string, topK: number = 5) => {
-    const response = await api.post('/contents/search', {
-      query,
-      content_type: contentType,
-      top_k: topK,
-    });
+    let url = `/api/contents/search?query=${encodeURIComponent(query)}&top_k=${topK}`;
+    if (contentType) url += `&content_type=${contentType}`;
+    const response = await api.post(url);
     return response.data;
   },
 
   // 删除内容
   deleteContent: async (id: string) => {
-    const response = await api.delete(`/contents/${id}`);
+    const response = await api.delete(`/api/contents/${id}`);
     return response.data;
   },
 };
@@ -331,13 +326,13 @@ export const contentApi = {
 export const skillApi = {
   // 获取所有可用skills
   listSkills: async () => {
-    const response = await api.get('/skills/');
+    const response = await api.get('/api/skills/');
     return response.data;
   },
 
   // 调用skill
   invokeSkill: async (skillName: string, params: object) => {
-    const response = await api.post('/skills/invoke', {
+    const response = await api.post('/api/skills/invoke', {
       skill_name: skillName,
       params,
     });
@@ -350,7 +345,7 @@ export const skillApi = {
 export const agentApi = {
   // 执行Agent任务
   executeTask: async (task: string, context?: object) => {
-    const response = await api.post('/agent/execute', {
+    const response = await api.post('/api/agent/execute', {
       task,
       context,
     });
@@ -363,7 +358,7 @@ export const agentApi = {
     onChunk: (chunk: string) => void,
     context?: object
   ) => {
-    const response = await fetch(`${API_BASE_URL}/agent/execute/stream`, {
+    const response = await fetch(`${API_BASE_URL}/api/agent/execute/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -398,6 +393,18 @@ export const agentApi = {
         }
       }
     }
+  },
+
+  // 获取所有任务列表
+  listTasks: async (limit: number = 50) => {
+    const response = await api.get(`/api/agent/tasks?limit=${limit}`);
+    return response.data;
+  },
+
+  // 获取单个任务详情
+  getTask: async (taskId: string) => {
+    const response = await api.get(`/api/agent/task/${taskId}`);
+    return response.data;
   },
 };
 

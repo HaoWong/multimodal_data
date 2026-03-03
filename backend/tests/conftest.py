@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.models.database_models import Base
+from app.models import content_models  # 导入以注册所有模型
 from fastapi.testclient import TestClient
 
 settings = get_settings()
@@ -42,20 +43,23 @@ def engine():
 
 @pytest.fixture(scope="function")
 def db_session(engine):
-    """创建数据库会话 - 每个测试函数独立"""
-    # 创建所有表
+    """创建数据库会话 - 每个测试函数独立，使用事务回滚清理数据"""
+    # 创建所有表（如果不存在）
     Base.metadata.create_all(bind=engine)
     
     # 创建会话
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
     
+    # 开始嵌套事务（保存点）
+    nested = session.begin_nested()
+    
     try:
         yield session
     finally:
+        # 回滚嵌套事务，撤销测试期间的所有更改
+        nested.rollback()
         session.close()
-        # 清理所有表数据
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture(scope="function")

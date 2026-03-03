@@ -7,7 +7,6 @@ import ChatPage from './pages/ChatPage';
 import DocumentsPage from './pages/DocumentsPage';
 import ImagesPage from './pages/ImagesPage';
 import VideosPage from './pages/VideosPage';
-import AssignmentsPage from './pages/AssignmentsPage';
 import UploadTaskPanel from './components/UploadTaskPanel';
 import { useUploadStore } from './stores';
 
@@ -27,8 +26,7 @@ const App: React.FC = () => {
         return <ImagesPage />;
       case 'videos':
         return <VideosPage />;
-      case 'assignments':
-        return <AssignmentsPage />;
+
       case 'settings':
         return (
           <div

@@ -199,8 +199,16 @@ class AgentEngine:
                 # 处理文件路径参数（自动查找上传的文件）
                 processed_params = self._process_file_params(step.params)
                 
+                # 过滤参数：只保留 skill 需要的参数
+                skill_info = skill_registry.get(step.skill_name)
+                if skill_info and skill_info.parameters:
+                    allowed_params = {p.name for p in skill_info.parameters}
+                    filtered_params = {k: v for k, v in processed_params.items() if k in allowed_params}
+                else:
+                    filtered_params = processed_params
+                
                 # 调用skill
-                result = await skill_registry.invoke(step.skill_name, **processed_params)
+                result = await skill_registry.invoke(step.skill_name, **filtered_params)
                 step.result = result
                 
                 if result.success:
@@ -210,6 +218,12 @@ class AgentEngine:
                         yield f"   结果: {data_str[:200]}...\n" if len(data_str) > 200 else f"   结果: {data_str}\n"
                 else:
                     yield f"   ❌ 失败: {result.error}\n"
+                    # Skill 执行失败，停止执行并标记任务失败
+                    task.status = "failed"
+                    task.final_result = f"步骤 {step.step_number} ({step.skill_name}) 执行失败: {result.error}"
+                    task.completed_at = datetime.now()
+                    yield f"\n❌ 任务失败: 步骤 {step.step_number} 执行失败\n"
+                    return
             
             # 生成最终结果
             yield "\n📝 生成最终结果...\n"

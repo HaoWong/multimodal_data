@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Menu, Button, Empty, Modal, Input, message, Dropdown } from 'antd';
+import { Menu, Button, Empty, Modal, Input, message, Dropdown, Card } from 'antd';
 import {
   MessageOutlined,
   FileTextOutlined,
@@ -11,8 +11,10 @@ import {
   EditOutlined,
   MoreOutlined,
   BookOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { useChatStore } from '../stores/chatStore';
+
 
 interface SidebarProps {
   activeTab: string;
@@ -77,11 +79,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
       key: 'chat',
       icon: <MessageOutlined />,
       label: '对话',
-    },
-    {
-      key: 'assignments',
-      icon: <BookOutlined />,
-      label: '作业管理',
     },
     {
       key: 'documents',

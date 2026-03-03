@@ -2,15 +2,32 @@
 统一内容模型 - 支持多模态数据存储
 文本、图片、视频统一存储和检索
 """
-from sqlalchemy import Column, String, DateTime, JSON, Text, Enum, Index, Integer, Float
+from sqlalchemy import Column, String, DateTime, Text, Enum, Index, Integer, Float
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.types import TypeDecorator
 from pgvector.sqlalchemy import Vector
 import uuid
+import json
 from datetime import datetime, timezone
 import enum
 
 from app.core.database import Base
+
+
+class JSONWithChinese(TypeDecorator):
+    """自定义JSON类型，确保中文不被转义"""
+    impl = JSONB
+    
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return {}
+        # 直接返回字典，让 SQLAlchemy 和 PostgreSQL 处理 JSONB
+        # 不要在这里进行 json.dumps/json.loads，这会破坏中文
+        return value
+    
+    def process_result_value(self, value, dialect):
+        return value
 
 
 def utc_now():
@@ -49,18 +66,11 @@ class Content(Base):
     embedding = Column(Vector(1024), nullable=True)
     
     # 元数据
-    content_metadata = Column(JSON, default=dict)  # 扩展元数据
+    content_metadata = Column(JSONWithChinese, default=dict)  # 扩展元数据
     
     # 时间戳
     created_at = Column(DateTime, default=utc_now, index=True)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
-    
-    # 关联的作业（多对多关系）
-    assignments = relationship(
-        "Assignment",
-        secondary="assignment_content_association",
-        back_populates="contents"
-    )
     
     # 索引
     __table_args__ = (
@@ -105,7 +115,7 @@ class ContentChunk(Base):
     embedding = Column(Vector(1024), nullable=True)
     
     # 元数据
-    chunk_metadata = Column(JSON, default=dict)
+    chunk_metadata = Column(JSONWithChinese, default=dict)
     created_at = Column(DateTime, default=utc_now)
     
     # 索引

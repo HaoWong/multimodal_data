@@ -9,7 +9,7 @@ async def stream_json_response(
 ) -> AsyncGenerator[str, None]:
     """将字符串流包装为JSON格式"""
     async for chunk in generator:
-        data = json.dumps({key: chunk})
+        data = json.dumps({key: chunk}, ensure_ascii=False)
         yield f"data: {data}\n\n"
     yield "data: [DONE]\n\n"
 

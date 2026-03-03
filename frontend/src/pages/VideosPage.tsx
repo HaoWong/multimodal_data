@@ -17,9 +17,19 @@ import {
 import { UploadOutlined, VideoCameraOutlined, PlayCircleOutlined, EyeOutlined, CloseOutlined } from '@ant-design/icons';
 import { contentApi, MediaItem, MediaDetail } from '../services/api';
 import { useUploadStore } from '../stores';
+import UnifiedTaskMonitor from '../components/UnifiedTaskMonitor';
 import ReactMarkdown from 'react-markdown';
 
 const { Text } = Typography;
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+// 获取完整视频URL
+const getFullVideoUrl = (url: string) => {
+  if (!url) return '';
+  if (url.startsWith('http')) return url;
+  return `${API_BASE_URL}${url}`;
+};
 
 const VideosPage: React.FC = () => {
   const [videos, setVideos] = useState<MediaItem[]>([]);
@@ -29,7 +39,7 @@ const VideosPage: React.FC = () => {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewVideo, setPreviewVideo] = useState('');
   
-  const { addTask, updateUploadProgress, startAnalyzing, updateAnalyzingProgress, completeTask, failTask } = useUploadStore();
+  const { addTask, updateUploadProgress, startAnalyzing, updateAnalyzingProgress, completeTask, failTask, setPanelOpen } = useUploadStore();
 
   // 加载视频列表
   const loadVideos = useCallback(async () => {
@@ -61,6 +71,9 @@ const VideosPage: React.FC = () => {
 
   // 处理视频上传（三阶段进度：上传 → AI分析 → 完成）
   const handleUpload = async (file: File) => {
+    // 打开上传进度面板
+    setPanelOpen(true);
+    
     // 添加任务到上传队列
     const taskId = addTask({
       fileName: file.name,
@@ -187,7 +200,7 @@ const VideosPage: React.FC = () => {
                             color: '#999',
                             cursor: 'pointer',
                           }}
-                          onClick={() => handlePlay(video.url)}
+                          onClick={() => handlePlay(getFullVideoUrl(video.url))}
                         >
                           <PlayCircleOutlined />
                         </div>
@@ -290,7 +303,7 @@ const VideosPage: React.FC = () => {
         {selectedVideo && (
           <div>
             <video
-              src={selectedVideo.url}
+              src={getFullVideoUrl(selectedVideo.url)}
               controls
               style={{ width: '100%', maxHeight: 300 }}
             />
@@ -304,6 +317,9 @@ const VideosPage: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {/* 统一任务监控面板 */}
+      <UnifiedTaskMonitor />
     </div>
   );
 };

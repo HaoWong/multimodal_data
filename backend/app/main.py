@@ -1,11 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import json
 
 from app.core.config import get_settings
 from app.core.database import engine, Base, init_vector_extension
-from app.api import documents, chat, images, contents, skills, agent, tasks, assignments
+from app.api import documents, chat, images, contents, skills, agent, tasks
 from app.skills import skill_registry
+
+
+class CustomJSONResponse(JSONResponse):
+    """自定义 JSONResponse，确保中文字符不被转义"""
+    def render(self, content) -> bytes:
+        return json.dumps(content, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":")).encode("utf-8")
 
 settings = get_settings()
 
@@ -43,7 +51,8 @@ app = FastAPI(
     title="多模态RAG系统 API",
     description="基于PostgreSQL + Ollama的多模态向量检索增强生成系统",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    default_response_class=CustomJSONResponse
 )
 
 # 配置CORS
@@ -55,19 +64,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(documents.router)
-app.include_router(chat.router)
-app.include_router(images.router)
-app.include_router(contents.router)  # 统一内容管理
-app.include_router(skills.router)    # Skills管理
-app.include_router(agent.router)     # Agent执行
+# 注册路由 - 统一使用 /api 前缀
+app.include_router(documents.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
+app.include_router(images.router, prefix="/api")
+app.include_router(contents.router, prefix="/api")  # 统一内容管理
+app.include_router(skills.router, prefix="/api")    # Skills管理
+app.include_router(agent.router, prefix="/api")     # Agent执行
 app.include_router(tasks.router, prefix="/api")     # 任务管理
-app.include_router(assignments.router)              # 作业管理
 
 # 静态文件服务
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# 提供 favicon.ico
+@app.get("/favicon.ico")
+async def favicon():
+    """返回网站图标"""
+    favicon_path = os.path.join(os.path.dirname(__file__), "..", "static", "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    # 如果没有 favicon，返回空响应避免 404
+    return {"message": "No favicon"}
 
 
 @app.get("/")

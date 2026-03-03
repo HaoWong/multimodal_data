@@ -85,7 +85,6 @@ async def upload_content(
                 import zipfile
                 from io import BytesIO
                 import tempfile
-                import shutil
                 
                 with open(save_path, 'rb') as f:
                     zip_content = f.read()
@@ -97,14 +96,35 @@ async def upload_content(
                 
                 try:
                     with zipfile.ZipFile(BytesIO(zip_content), 'r') as zf:
-                        # 解压所有文件
-                        zf.extractall(temp_dir)
+                        # 解压所有文件，保持原始文件名编码
+                        for member in zf.namelist():
+                            # 处理文件名编码问题
+                            try:
+                                # 尝试使用 UTF-8
+                                member_name = member.encode('cp437').decode('utf-8')
+                            except (UnicodeEncodeError, UnicodeDecodeError):
+                                try:
+                                    # 尝试使用 GBK（中文 Windows 常见）
+                                    member_name = member.encode('cp437').decode('gbk')
+                                except (UnicodeEncodeError, UnicodeDecodeError):
+                                    # 使用原始名称
+                                    member_name = member
+                            
+                            # 解压文件
+                            zf.extract(member, temp_dir)
+                            # 如果文件名被解码，重命名为正确的中文名
+                            original_path = os.path.join(temp_dir, member)
+                            decoded_path = os.path.join(temp_dir, member_name)
+                            if original_path != decoded_path and os.path.exists(original_path):
+                                os.rename(original_path, decoded_path)
                         
                         # 遍历解压后的文件
                         for root, dirs, files in os.walk(temp_dir):
                             for extracted_file in files:
                                 file_path = os.path.join(root, extracted_file)
                                 rel_path = os.path.relpath(file_path, temp_dir)
+                                # 确保路径使用正确的分隔符和编码
+                                rel_path = rel_path.replace('\\', '/')
                                 file_list.append(rel_path)
                                 
                                 # 根据文件类型进行分析
@@ -141,10 +161,10 @@ async def upload_content(
                                     elif extracted_file.lower().endswith(('.mp4', '.avi', '.mov', '.wmv')):
                                         # 视频文件分析
                                         from app.utils.video_processor import video_processor
-                                        import uuid
-                                        content_id = str(uuid.uuid4())
+                                        import uuid as uuid_module
+                                        video_content_id = str(uuid_module.uuid4())
                                         result = await video_processor.process_video(
-                                            file_path, content_id, ollama_client, max_frames=5
+                                            file_path, video_content_id, ollama_client, max_frames=5
                                         )
                                         analysis_results.append(f"\n=== 视频: {rel_path} ===\n时长: {result['duration']:.1f}秒\n{result['overall_description'][:1500]}...")
                                     
@@ -201,12 +221,11 @@ async def upload_content(
             if enable_chunking and content.extracted_text:
                 from app.utils.text_chunker import TextChunker
                 
-                chunker = TextChunker(
-                    chunk_size=chunk_size,
-                    chunk_overlap=chunk_overlap,
-                    separator="\n"
+                # 使用类方法进行文本分块
+                chunks = TextChunker.split_by_paragraphs(
+                    content.extracted_text,
+                    max_chunk_size=chunk_size
                 )
-                chunks = chunker.split_text(content.extracted_text)
                 
                 # 保存分块信息到元数据
                 content.content_metadata["chunking"] = {

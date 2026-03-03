@@ -62,6 +62,30 @@ async def execute_task_stream(request: Dict[str, Any]):
     )
 
 
+@router.get("/tasks")
+def list_tasks(limit: int = 50):
+    """获取所有任务列表"""
+    tasks = []
+    for task_id, task in agent.tasks.items():
+        tasks.append({
+            "task_id": task.task_id,
+            "description": task.description[:100] + "..." if len(task.description) > 100 else task.description,
+            "status": task.status,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "step_count": len(task.steps),
+            "has_result": bool(task.final_result)
+        })
+    
+    # 按创建时间倒序
+    tasks.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    
+    return {
+        "tasks": tasks[:limit],
+        "total": len(tasks)
+    }
+
+
 @router.get("/task/{task_id}")
 def get_task_status(task_id: str):
     """获取任务状态"""
@@ -74,6 +98,8 @@ def get_task_status(task_id: str):
         "description": task.description,
         "status": task.status,
         "final_result": task.final_result,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
         "steps": [
             {
                 "step_number": s.step_number,

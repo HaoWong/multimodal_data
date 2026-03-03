@@ -27,8 +27,9 @@ import {
   FileOutlined,
   CloseOutlined,
 } from '@ant-design/icons';
-import { documentApi } from '../services/api';
+import { documentApi, contentApi } from '../services/api';
 import { useUploadStore } from '../stores';
+import UnifiedTaskMonitor from '../components/UnifiedTaskMonitor';
 import ReactMarkdown from 'react-markdown';
 
 const { Text } = Typography;
@@ -40,6 +41,7 @@ interface DocumentItem {
   doc_type: string;
   created_at?: string;
   metadata?: any;
+  source?: 'document' | 'content';
 }
 
 const DocumentsPage: React.FC = () => {
@@ -50,14 +52,40 @@ const DocumentsPage: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [form] = Form.useForm();
   
-  const { addTask, updateUploadProgress, startAnalyzing, updateAnalyzingProgress, completeTask, failTask } = useUploadStore();
+  const { addTask, updateUploadProgress, startAnalyzing, updateAnalyzingProgress, completeTask, failTask, setPanelOpen } = useUploadStore();
 
-  // 加载文档列表
+  // 加载文档列表（从 documents 和 contents 两个源获取）
   const loadDocuments = useCallback(async () => {
     setLoading(true);
     try {
-      const docs = await documentApi.getDocuments();
-      setDocuments(docs || []);
+      // 同时获取 documents 和 contents
+      const [docs, contents] = await Promise.all([
+        documentApi.getDocuments().catch(() => []),
+        contentApi.listContents(undefined, 0, 100).catch(() => [])
+      ]);
+      
+      // 转换 contents 为文档格式
+      const contentDocs = (contents || []).map((content: any) => ({
+        id: content.id,
+        title: content.original_name || content.description || '未命名文件',
+        content: content.extracted_text || '',
+        doc_type: content.content_type?.toLowerCase() || 'unknown',
+        created_at: content.created_at,
+        metadata: content.content_metadata,
+        source: 'content' // 标记来源
+      }));
+      
+      // 合并两个列表，按时间倒序
+      const allDocs = [
+        ...(docs || []).map((d: any) => ({ ...d, source: 'document' })),
+        ...contentDocs
+      ].sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+      
+      setDocuments(allDocs);
     } catch (error) {
       console.error('加载文档失败:', error);
       message.error('加载文档失败');
@@ -89,6 +117,9 @@ const DocumentsPage: React.FC = () => {
 
   // 上传文件（三阶段进度：上传 → AI分析 → 完成）
   const handleUpload = async (file: File) => {
+    // 打开上传进度面板
+    setPanelOpen(true);
+    
     // 添加任务到上传队列
     const taskId = addTask({
       fileName: file.name,
@@ -133,9 +164,15 @@ const DocumentsPage: React.FC = () => {
   };
 
   // 删除文档
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (doc: DocumentItem) => {
     try {
-      await documentApi.deleteDocument(id);
+      if (doc.source === 'content') {
+        // 从 contents 删除
+        await contentApi.deleteContent(doc.id);
+      } else {
+        // 从 documents 删除
+        await documentApi.deleteDocument(doc.id);
+      }
       message.success('文档删除成功');
       loadDocuments();
     } catch (error) {
@@ -146,7 +183,20 @@ const DocumentsPage: React.FC = () => {
   // 查看文档详情
   const handleViewDetail = async (doc: DocumentItem) => {
     try {
-      const detail = await documentApi.getDocument(doc.id);
+      let detail;
+      if (doc.source === 'content') {
+        // 从 contents 获取详情
+        detail = await contentApi.getContentDetail(doc.id);
+        detail = {
+          ...detail,
+          title: detail.original_name || detail.description || '未命名文件',
+          content: detail.extracted_text || '暂无内容',
+          doc_type: detail.content_type?.toLowerCase() || 'unknown'
+        };
+      } else {
+        // 从 documents 获取详情
+        detail = await documentApi.getDocument(doc.id);
+      }
       setSelectedDoc(detail);
       setDetailModalVisible(true);
     } catch (error) {
@@ -241,7 +291,7 @@ const DocumentsPage: React.FC = () => {
                         {/* 删除按钮 - 右上角X号 */}
                         <Popconfirm
                           title="确定要删除这个文档吗？"
-                          onConfirm={() => handleDelete(doc.id)}
+                          onConfirm={() => handleDelete(doc)}
                           okText="确定"
                           cancelText="取消"
                         >
@@ -371,6 +421,9 @@ const DocumentsPage: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {/* 统一任务监控面板 */}
+      <UnifiedTaskMonitor />
     </div>
   );
 };

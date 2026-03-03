@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { AppState, ChatMessage, ChatSession, MessageSource } from '../types';
 import { chatApi } from '../services/api';
@@ -15,23 +16,25 @@ const createNewSession = (title: string = '新对话'): ChatSession => ({
   updatedAt: new Date(),
 });
 
-export const useChatStore = create<AppState>((set, get) => ({
-  // 状态
-  currentSessionId: null,
-  sessions: [],
-  messages: [],
-  isLoading: false,
-  useRag: true,
+export const useChatStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      // 状态
+      currentSessionId: null,
+      sessions: [],
+      messages: [],
+      isLoading: false,
+      useRag: true,
 
-  // 最近上传的文件列表
-  recentFiles: [] as {id: string, name: string, type: string}[],
+      // 最近上传的文件列表
+      recentFiles: [] as {id: string, name: string, type: string}[],
 
-  // 添加最近文件
-  addRecentFile: (file: {id: string, name: string, type: string}) => {
-    set((state) => ({
-      recentFiles: [file, ...state.recentFiles].slice(0, 5) // 只保留最近5个
-    }));
-  },
+      // 添加最近文件
+      addRecentFile: (file: {id: string, name: string, type: string}) => {
+        set((state) => ({
+          recentFiles: [file, ...state.recentFiles].slice(0, 5) // 只保留最近5个
+        }));
+      },
 
   // 发送消息
   sendMessage: async (content: string) => {
@@ -175,7 +178,7 @@ export const useChatStore = create<AppState>((set, get) => ({
     
     // 从后端加载历史消息
     try {
-      const response = await axios.get(`${API_BASE_URL}/chat/history/${sessionId}`);
+      const response = await axios.get(`${API_BASE_URL}/api/chat/history/${sessionId}`);
       const history = response.data;
       
       // 转换为前端消息格式
@@ -230,7 +233,7 @@ export const useChatStore = create<AppState>((set, get) => ({
   // 加载会话列表
   loadSessions: async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/chat/sessions`);
+      const response = await axios.get(`${API_BASE_URL}/api/chat/sessions`);
       const sessionsData = response.data;
       
       // 转换为前端会话格式
@@ -257,4 +260,16 @@ export const useChatStore = create<AppState>((set, get) => ({
   clearMessages: () => {
     set({ messages: [] });
   },
-}));
+}),
+    {
+      name: 'chat-storage', // localStorage 中的键名
+      partialize: (state) => ({
+        // 只持久化这些字段
+        sessions: state.sessions,
+        currentSessionId: state.currentSessionId,
+        recentFiles: state.recentFiles,
+        useRag: state.useRag,
+      }),
+    }
+  )
+);

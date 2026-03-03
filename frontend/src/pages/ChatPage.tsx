@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Spin, Switch, Tooltip, Card, Typography, Space, Button, Upload, Input, Badge, Drawer } from 'antd';
+import { Spin, Switch, Tooltip, Card, Typography, Space, Button, Upload, Input, Badge, Drawer, Tag, message as antMessage, List } from 'antd';
 import { 
   ThunderboltOutlined, 
   DatabaseOutlined, 
@@ -11,34 +11,57 @@ import {
   ClearOutlined,
   UploadOutlined,
   UnorderedListOutlined,
+  FileOutlined,
 } from '@ant-design/icons';
 import ChatMessage from '../components/ChatMessage';
-import TaskMonitor from '../components/TaskMonitor';
+import UnifiedTaskMonitor from '../components/UnifiedTaskMonitor';
 import { useChatStore } from '../stores/chatStore';
 import { contentApi, agentApi } from '../services/api';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
 
+// 文件类型图标映射
+const getFileIcon = (fileName: string) => {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
+    return <FileImageOutlined style={{ color: '#52c41a' }} />;
+  }
+  if (['mp4', 'avi', 'mov', 'wmv'].includes(ext || '')) {
+    return <VideoCameraOutlined style={{ color: '#1890ff' }} />;
+  }
+  if (['pdf', 'doc', 'docx', 'txt', 'md'].includes(ext || '')) {
+    return <FileTextOutlined style={{ color: '#fa8c16' }} />;
+  }
+  return <FileOutlined style={{ color: '#666' }} />;
+};
+
 const ChatPage: React.FC = () => {
-  const { messages, isLoading, sendMessage, createNewSession, clearMessages } = useChatStore();
+  const { messages, isLoading, sendMessage, createNewSession, clearMessages, addRecentFile } = useChatStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [useAgent, setUseAgent] = useState(false);
   const [useRag, setUseRag] = useState(true);
   const [inputValue, setInputValue] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [taskDrawerVisible, setTaskDrawerVisible] = useState(false);
   const [runningTaskCount, setRunningTaskCount] = useState(0);
+  
+  // 已上传文件历史记录（当前会话）
+  const [uploadedFilesHistory, setUploadedFilesHistory] = useState<Array<{
+    id: string;
+    name: string;
+    type: string;
+    uploadedAt: Date;
+  }>>([]);
 
   // 自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 定期检查运行中的任务数量（仅在可能有任务时）
+  // 定期检查运行中的任务数量
   useEffect(() => {
-    // 初始不检查，等用户打开抽屉时再检查
-    // 或者只在 drawer 打开时检查
     if (!taskDrawerVisible) return;
     
     const checkTasks = async () => {
@@ -48,37 +71,134 @@ const ChatPage: React.FC = () => {
         const data = await response.json();
         setRunningTaskCount(data.total || 0);
       } catch (error) {
-        // 静默失败，不阻塞UI
+        // 静默失败
       }
     };
     
     checkTasks();
-    const interval = setInterval(checkTasks, 10000); // 10秒检查一次
+    const interval = setInterval(checkTasks, 10000);
     return () => clearInterval(interval);
   }, [taskDrawerVisible]);
 
+  // 处理文件选择（不立即上传）
+  const handleFileSelect = (file: File) => {
+    // 检查是否已选择
+    if (selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+      antMessage.warning(`文件 "${file.name}" 已选择`);
+      return false;
+    }
+    
+    // 限制最多5个文件
+    if (selectedFiles.length >= 5) {
+      antMessage.warning('最多只能选择5个文件');
+      return false;
+    }
+    
+    setSelectedFiles(prev => [...prev, file]);
+    antMessage.success(`已选择文件: ${file.name}`);
+    return false; // 阻止默认上传行为
+  };
+
+  // 移除已选择的文件
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // 清空所有选择的文件
+  const clearSelectedFiles = () => {
+    setSelectedFiles([]);
+  };
+
+  // 统一发送消息和文件
   const handleSend = async () => {
-    if (!inputValue.trim() || isLoading) return;
+    if ((!inputValue.trim() && selectedFiles.length === 0) || isLoading) return;
 
     const message = inputValue.trim();
+    const files = [...selectedFiles];
+    
+    // 清空输入
     setInputValue('');
+    setSelectedFiles([]);
 
     if (useAgent) {
-      await sendAgentMessage(message);
+      await sendAgentMessageWithFiles(message, files);
     } else {
-      await sendMessage(message);
+      await sendMessageWithFiles(message, files);
     }
   };
 
-  const sendAgentMessage = async (message: string) => {
+  // 普通模式：发送消息和文件
+  const sendMessageWithFiles = async (message: string, files: File[]) => {
+    // 如果有文件，先上传文件
+    let uploadedFiles: { name: string; id: string; type: string }[] = [];
+
+    if (files.length > 0) {
+      setIsUploading(true);
+      try {
+        for (const file of files) {
+          const result = await contentApi.uploadContent(file);
+          uploadedFiles.push({
+            id: result.id,
+            name: file.name,
+            type: result.content_type
+          });
+        }
+        antMessage.success(`成功上传 ${files.length} 个文件`);
+      } catch (error) {
+        antMessage.error('文件上传失败');
+        console.error(error);
+        setIsUploading(false);
+        return;
+      }
+      setIsUploading(false);
+    }
+
+    // 添加到上传历史记录和最近文件列表
+    if (uploadedFiles.length > 0) {
+      setUploadedFilesHistory(prev => [
+        ...uploadedFiles.map(f => ({ ...f, uploadedAt: new Date() })),
+        ...prev
+      ].slice(0, 20)); // 只保留最近20个
+      
+      // 添加到最近文件列表（用于上下文关联）
+      uploadedFiles.forEach(file => {
+        addRecentFile(file);
+      });
+    }
+
+    // 构建完整的消息
+    let fullMessage = message;
+    if (uploadedFiles.length > 0) {
+      const fileList = uploadedFiles.map(f => `"${f.name}"`).join('、');
+      if (message) {
+        fullMessage = `${message}\n\n[已上传文件: ${fileList}]`;
+      } else {
+        fullMessage = `请分析以下文件：${fileList}`;
+      }
+    }
+
+    // 发送消息
+    await sendMessage(fullMessage);
+  };
+
+  // Agent模式：发送任务和文件
+  const sendAgentMessageWithFiles = async (message: string, files: File[]) => {
     const userMessageId = Date.now().toString();
+    
+    // 显示用户消息（包含文件信息）
+    let displayMessage = message || '请分析这些文件';
+    if (files.length > 0) {
+      const fileNames = files.map(f => f.name).join('、');
+      displayMessage += `\n\n[待上传文件: ${fileNames}]`;
+    }
+    
     useChatStore.setState((state) => ({
       messages: [
         ...state.messages,
         {
           id: userMessageId,
           role: 'user',
-          content: message,
+          content: displayMessage,
           timestamp: new Date(),
         },
       ],
@@ -86,10 +206,47 @@ const ChatPage: React.FC = () => {
     }));
 
     try {
+      // 上传文件
+      let uploadedFiles: { name: string; id: string; type: string }[] = [];
+
+      if (files.length > 0) {
+        setIsUploading(true);
+        for (const file of files) {
+          const result = await contentApi.uploadContent(file);
+          uploadedFiles.push({
+            id: result.id,
+            name: file.name,
+            type: result.content_type
+          });
+        }
+        setIsUploading(false);
+      }
+
+      // 添加到上传历史记录和最近文件列表
+      if (uploadedFiles.length > 0) {
+        setUploadedFilesHistory(prev => [
+          ...uploadedFiles.map(f => ({ ...f, uploadedAt: new Date() })),
+          ...prev
+        ].slice(0, 20));
+        
+        // 添加到最近文件列表（用于上下文关联）
+        uploadedFiles.forEach(file => {
+          addRecentFile(file);
+        });
+      }
+
+      // 构建Agent任务上下文
+      const context = {
+        uploadedFiles: uploadedFiles,
+        useRag: useRag,
+        task: message || '分析上传的文件',
+      };
+
+      // 调用Agent API（流式）
       let fullResponse = '';
       
       await agentApi.executeTaskStream(
-        message,
+        message || '请分析上传的文件',
         (chunk) => {
           fullResponse += chunk;
           useChatStore.setState((state) => {
@@ -108,12 +265,14 @@ const ChatPage: React.FC = () => {
             return { messages };
           });
         },
-        { useRag }
+        context
       );
     } catch (error) {
+      antMessage.error('Agent执行失败');
       console.error(error);
     } finally {
       useChatStore.setState({ isLoading: false });
+      setIsUploading(false);
     }
   };
 
@@ -124,35 +283,11 @@ const ChatPage: React.FC = () => {
     }
   };
 
-  const handleUpload = async (file: File) => {
-    setIsUploading(true);
-    try {
-      const result = await contentApi.uploadContent(file);
-      // 添加到最近文件列表
-      const { addRecentFile } = useChatStore.getState();
-      addRecentFile({
-        id: result.id || Date.now().toString(),
-        name: file.name,
-        type: result.content_type || 'unknown'
-      });
-      
-      const message = useAgent
-        ? `我已经上传了文件 "${file.name}"，请帮我分析处理这个文件。`
-        : `我已经上传了文件 "${file.name}"，请帮我分析一下这个文件的内容。`;
-      setInputValue(message);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsUploading(false);
-    }
-    return false;
-  };
-
   // 快捷功能按钮
   const quickActions = [
-    { icon: <FileImageOutlined />, label: '图片', color: '#52c41a', type: 'image' },
-    { icon: <VideoCameraOutlined />, label: '视频', color: '#1890ff', type: 'video' },
-    { icon: <FileTextOutlined />, label: '文档', color: '#fa8c16', type: 'document' },
+    { icon: <FileImageOutlined />, label: '图片', color: '#52c41a', type: 'image', accept: '.jpg,.jpeg,.png,.gif' },
+    { icon: <VideoCameraOutlined />, label: '视频', color: '#1890ff', type: 'video', accept: '.mp4,.avi,.mov,.wmv' },
+    { icon: <FileTextOutlined />, label: '文档', color: '#fa8c16', type: 'document', accept: '.txt,.pdf,.docx,.doc,.md' },
   ];
 
   return (
@@ -165,7 +300,7 @@ const ChatPage: React.FC = () => {
         overflow: 'hidden',
       }}
     >
-      {/* 顶部工具栏 - 简化版 */}
+      {/* 顶部工具栏 */}
       <div
         style={{
           padding: '12px 24px',
@@ -208,7 +343,6 @@ const ChatPage: React.FC = () => {
         </div>
 
         <Space>
-          {/* 任务监控按钮 */}
           <Button
             icon={<UnorderedListOutlined />}
             size="small"
@@ -264,7 +398,7 @@ const ChatPage: React.FC = () => {
           }}
         >
           {messages.length === 0 ? (
-            /* 空状态 - 居中显示 */
+            /* 空状态 */
             <div
               style={{
                 flex: 1,
@@ -281,6 +415,31 @@ const ChatPage: React.FC = () => {
               
               {/* 输入框容器 */}
               <div style={{ width: '100%', maxWidth: 720 }}>
+                {/* 已选择文件显示区域 */}
+                {selectedFiles.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <Text type="secondary">已选择 {selectedFiles.length} 个文件:</Text>
+                      <Button type="link" size="small" onClick={clearSelectedFiles}>
+                        清空
+                      </Button>
+                    </div>
+                    <Space wrap>
+                      {selectedFiles.map((file, index) => (
+                        <Tag
+                          key={index}
+                          icon={getFileIcon(file.name)}
+                          closable
+                          onClose={() => removeSelectedFile(index)}
+                          style={{ padding: '4px 8px' }}
+                        >
+                          {file.name}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                )}
+
                 {/* 输入框 */}
                 <Card
                   style={{
@@ -294,9 +453,13 @@ const ChatPage: React.FC = () => {
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={
-                      useAgent 
-                        ? '输入任务描述，Agent将自动规划并执行...'
-                        : '输入问题，AI将为您提供智能回答...'
+                      selectedFiles.length > 0
+                        ? (useAgent 
+                          ? '描述您希望如何处理这些文件...'
+                          : '输入问题，AI将结合文件内容回答...')
+                        : (useAgent 
+                          ? '输入任务描述，Agent将自动规划并执行...'
+                          : '输入问题，AI将为您提供智能回答...')
                     }
                     autoSize={{ minRows: 2, maxRows: 4 }}
                     bordered={false}
@@ -319,18 +482,19 @@ const ChatPage: React.FC = () => {
                   >
                     {/* 左侧上传按钮 */}
                     <Upload
-                      beforeUpload={handleUpload}
+                      beforeUpload={handleFileSelect}
                       showUploadList={false}
-                      accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.avi,.mov"
-                      disabled={isUploading}
+                      accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.avi,.mov,.zip"
+                      disabled={isUploading || selectedFiles.length >= 5}
+                      multiple
                     >
                       <Button 
                         type="text" 
                         icon={<UploadOutlined />}
-                        loading={isUploading}
-                        style={{ color: '#666' }}
+                        disabled={selectedFiles.length >= 5}
+                        style={{ color: selectedFiles.length >= 5 ? '#999' : '#666' }}
                       >
-                        上传文件
+                        {selectedFiles.length >= 5 ? '最多5个文件' : '添加文件'}
                       </Button>
                     </Upload>
 
@@ -340,12 +504,12 @@ const ChatPage: React.FC = () => {
                       shape="circle"
                       icon={<SendOutlined />}
                       onClick={handleSend}
-                      loading={isLoading}
-                      disabled={!inputValue.trim()}
+                      loading={isLoading || isUploading}
+                      disabled={!inputValue.trim() && selectedFiles.length === 0}
                       style={{
                         width: 40,
                         height: 40,
-                        backgroundColor: inputValue.trim() ? '#1890ff' : '#d9d9d9',
+                        backgroundColor: (inputValue.trim() || selectedFiles.length > 0) ? '#1890ff' : '#d9d9d9',
                       }}
                     />
                   </div>
@@ -361,44 +525,55 @@ const ChatPage: React.FC = () => {
                   }}
                 >
                   {quickActions.map((action) => (
-                    <div
+                    <Upload
                       key={action.type}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 8,
-                        cursor: 'pointer',
-                        transition: 'all 0.3s',
-                        padding: '8px 16px',
-                        borderRadius: 8,
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#f0f0f0';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                      }}
+                      beforeUpload={handleFileSelect}
+                      showUploadList={false}
+                      accept={action.accept}
+                      disabled={selectedFiles.length >= 5}
+                      multiple
                     >
                       <div
                         style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 12,
-                          backgroundColor: `${action.color}15`,
                           display: 'flex',
+                          flexDirection: 'column',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 24,
-                          color: action.color,
+                          gap: 8,
+                          cursor: selectedFiles.length >= 5 ? 'not-allowed' : 'pointer',
+                          transition: 'all 0.3s',
+                          padding: '8px 16px',
+                          borderRadius: 8,
+                          opacity: selectedFiles.length >= 5 ? 0.5 : 1,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (selectedFiles.length < 5) {
+                            e.currentTarget.style.backgroundColor = '#f0f0f0';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = 'transparent';
                         }}
                       >
-                        {action.icon}
+                        <div
+                          style={{
+                            width: 48,
+                            height: 48,
+                            borderRadius: 12,
+                            backgroundColor: `${action.color}15`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 24,
+                            color: action.color,
+                          }}
+                        >
+                          {action.icon}
+                        </div>
+                        <Text style={{ fontSize: 13, color: '#666' }}>
+                          {action.label}
+                        </Text>
                       </div>
-                      <Text style={{ fontSize: 13, color: '#666' }}>
-                        {action.label}
-                      </Text>
-                    </div>
+                    </Upload>
                   ))}
                 </div>
               </div>
@@ -430,6 +605,25 @@ const ChatPage: React.FC = () => {
             }}
           >
             <div style={{ maxWidth: 900, margin: '0 auto' }}>
+              {/* 已选择文件显示 */}
+              {selectedFiles.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <Space wrap>
+                    {selectedFiles.map((file, index) => (
+                      <Tag
+                        key={index}
+                        icon={getFileIcon(file.name)}
+                        closable
+                        onClose={() => removeSelectedFile(index)}
+                        style={{ padding: '4px 8px' }}
+                      >
+                        {file.name}
+                      </Tag>
+                    ))}
+                  </Space>
+                </div>
+              )}
+
               <Card
                 style={{
                   borderRadius: 12,
@@ -442,30 +636,35 @@ const ChatPage: React.FC = () => {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="输入问题..."
+                    placeholder={
+                      selectedFiles.length > 0
+                        ? '描述您希望如何处理这些文件...'
+                        : '输入问题...'
+                    }
                     autoSize={{ minRows: 1, maxRows: 4 }}
                     bordered={false}
                     style={{ flex: 1, resize: 'none' }}
                   />
                   <Space>
                     <Upload
-                      beforeUpload={handleUpload}
+                      beforeUpload={handleFileSelect}
                       showUploadList={false}
                       accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.avi,.mov"
-                      disabled={isUploading}
+                      disabled={isUploading || selectedFiles.length >= 5}
+                      multiple
                     >
                       <Button 
                         type="text" 
                         icon={<UploadOutlined />}
-                        loading={isUploading}
+                        disabled={selectedFiles.length >= 5}
                       />
                     </Upload>
                     <Button
                       type="primary"
                       icon={<SendOutlined />}
                       onClick={handleSend}
-                      loading={isLoading}
-                      disabled={!inputValue.trim()}
+                      loading={isLoading || isUploading}
+                      disabled={!inputValue.trim() && selectedFiles.length === 0}
                     >
                       发送
                     </Button>
@@ -477,6 +676,74 @@ const ChatPage: React.FC = () => {
         )}
       </div>
 
+      {/* 已上传文件历史记录 */}
+      {uploadedFilesHistory.length > 0 && (
+        <Card
+          title={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>📎 已上传文件 ({uploadedFilesHistory.length})</span>
+              <Button type="text" size="small" onClick={() => setUploadedFilesHistory([])}>
+                清空
+              </Button>
+            </div>
+          }
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            left: 280,
+            width: 320,
+            maxHeight: 400,
+            overflow: 'auto',
+            zIndex: 999,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          }}
+        >
+          <List
+            dataSource={uploadedFilesHistory}
+            renderItem={(file) => (
+              <List.Item
+                style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}
+                actions={[
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => {
+                      // 根据文件类型跳转到相应页面
+                      if (file.type === 'IMAGE') {
+                        window.open(`/images?id=${file.id}`, '_blank');
+                      } else if (file.type === 'VIDEO') {
+                        window.open(`/videos?id=${file.id}`, '_blank');
+                      } else {
+                        window.open(`/documents?id=${file.id}`, '_blank');
+                      }
+                    }}
+                  >
+                    查看
+                  </Button>,
+                ]}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {getFileIcon(file.name)}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {file.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#999' }}>
+                      {file.type} · {file.uploadedAt.toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              </List.Item>
+            )}
+          />
+          <div style={{ marginTop: 8, textAlign: 'center' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              刷新页面后记录会清空，文件可在知识库/图片库/视频库中查看
+            </Text>
+          </div>
+        </Card>
+      )}
+
       {/* 任务监控抽屉 */}
       <Drawer
         title="任务监控"
@@ -485,7 +752,7 @@ const ChatPage: React.FC = () => {
         open={taskDrawerVisible}
         width={400}
       >
-        <TaskMonitor />
+        <UnifiedTaskMonitor />
       </Drawer>
     </div>
   );
