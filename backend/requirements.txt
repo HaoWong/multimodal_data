@@ -1,0 +1,35 @@
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Database
+sqlalchemy>=2.0.25
+pgvector>=0.2.4
+psycopg2-binary>=2.9.9
+alembic>=1.13.1
+
+# Data Validation
+pydantic>=2.5.3
+pydantic-settings>=2.1.0
+
+# File Handling
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+pillow>=10.4.0
+pypdf>=4.0.0
+python-docx>=1.1.0
+
+# HTTP Client
+aiohttp>=3.9.1
+httpx>=0.26.0
+
+# Math & Data
+numpy>=1.26.3
+
+# Video Processing
+opencv-python>=4.8.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0

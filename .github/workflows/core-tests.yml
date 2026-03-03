@@ -1,0 +1,86 @@
+name: Core Functionality Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/core-tests.yml'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'backend/**'
+
+jobs:
+  core-tests:
+    name: Run Core Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_multimodal
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - 11434:11434
+        options: >-
+          --health-cmd "curl -f http://localhost:11434/api/tags || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: backend/requirements.txt
+
+    - name: Install dependencies
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio
+
+    - name: Pull Ollama models
+      run: |
+        # 等待 Ollama 服务启动
+        sleep 10
+        # 拉取必要的模型
+        curl -X POST http://localhost:11434/api/pull -d '{"name": "bge-m3:latest"}' || true
+        curl -X POST http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}' || true
+        # 等待模型下载
+        sleep 60
+
+    - name: Run core tests
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_multimodal
+        OLLAMA_BASE_URL: http://localhost:11434
+      run: |
+        python scripts/run_core_tests.py
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: backend/test-results/
+        retention-days: 7
