@@ -8,6 +8,20 @@ const { override, overrideDevServer } = require('react-app-rewired');
 
 // 覆盖 webpack 配置
 const overrideWebpack = (config) => {
+  // 修复 Jest 测试时 axios ES 模块问题
+  config.module = config.module || {};
+  config.module.rules = config.module.rules || [];
+  
+  // 确保 Jest 配置正确
+  if (process.env.NODE_ENV === 'test') {
+    config.module.rules.push({
+      test: /\.m?js$/,
+      resolve: {
+        fullySpecified: false,
+      },
+    });
+  }
+  
   return config;
 };
 

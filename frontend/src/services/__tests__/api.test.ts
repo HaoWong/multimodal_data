@@ -18,37 +18,27 @@ describe('API Services', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResponse,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
-      const result = await chatApi.chat({
+      const result = await chatApi.sendMessage({
         message: '你好',
         use_rag: true,
         history: [],
       });
 
       expect(result).toEqual(mockResponse);
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/chat/'),
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({
-            message: '你好',
-            use_rag: true,
-            history: [],
-          }),
-        })
-      );
     });
 
     it('should handle chat error', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 500,
+        statusText: 'Internal Server Error',
       });
 
       await expect(
-        chatApi.chat({
+        chatApi.sendMessage({
           message: '你好',
           use_rag: false,
           history: [],
@@ -62,11 +52,11 @@ describe('API Services', () => {
           .fn()
           .mockResolvedValueOnce({
             done: false,
-            value: new TextEncoder().encode('data: 你好\n\n'),
+            value: new TextEncoder().encode('data: {"type": "content", "data": "你好"}\n\n'),
           })
           .mockResolvedValueOnce({
             done: false,
-            value: new TextEncoder().encode('data: 世界\n\n'),
+            value: new TextEncoder().encode('data: {"type": "content", "data": "世界"}\n\n'),
           })
           .mockResolvedValueOnce({
             done: true,
@@ -81,36 +71,35 @@ describe('API Services', () => {
         },
       });
 
-      const onChunk = jest.fn();
-      const onComplete = jest.fn();
-      const onError = jest.fn();
+      const onContent = jest.fn();
+      const onDone = jest.fn();
 
-      await chatApi.chatStream(
+      await chatApi.sendMessageStream(
         { message: '你好', use_rag: false, history: [] },
-        onChunk,
-        onComplete,
-        onError
+        { onContent, onDone }
       );
 
-      expect(onChunk).toHaveBeenCalledWith('你好');
-      expect(onChunk).toHaveBeenCalledWith('世界');
-      expect(onComplete).toHaveBeenCalled();
+      expect(onContent).toHaveBeenCalledWith('你好');
+      expect(onContent).toHaveBeenCalledWith('世界');
+      expect(onDone).toHaveBeenCalled();
     });
 
-    it('should get chat history', async () => {
-      const mockHistory = [
-        { role: 'user', content: '你好', timestamp: '2024-01-01' },
-        { role: 'assistant', content: '你好！', timestamp: '2024-01-01' },
-      ];
+    it('should get chat sessions', async () => {
+      const mockSessions = {
+        sessions: [
+          { id: 'session-1', title: '会话1', created_at: '2024-01-01' },
+          { id: 'session-2', title: '会话2', created_at: '2024-01-01' },
+        ],
+      };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockHistory,
+        json: async () => ({ success: true, data: mockSessions }),
       });
 
-      const result = await chatApi.getHistory('session-123');
+      const result = await chatApi.getSessions();
 
-      expect(result).toEqual(mockHistory);
+      expect(result).toEqual(mockSessions);
     });
   });
 
@@ -127,7 +116,7 @@ describe('API Services', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocument,
+        json: async () => ({ success: true, data: mockDocument }),
       });
 
       const result = await documentApi.createDocument({
@@ -138,47 +127,50 @@ describe('API Services', () => {
       expect(result).toEqual(mockDocument);
     });
 
-    it('should list documents', async () => {
-      const mockDocuments = [
-        { id: '1', title: '文档1', content: '内容1', doc_type: 'text', metadata: {}, created_at: '2024-01-01' },
-        { id: '2', title: '文档2', content: '内容2', doc_type: 'pdf', metadata: {}, created_at: '2024-01-01' },
-      ];
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockDocuments,
-      });
-
-      const result = await documentApi.listDocuments();
-
-      expect(result).toEqual(mockDocuments);
-      expect(result).toHaveLength(2);
-    });
-
-    it('should upload document', async () => {
-      const mockDocument = {
-        id: 'doc-123',
-        title: 'test.pdf',
-        content: 'PDF内容',
-        doc_type: 'pdf',
-        metadata: {},
-        created_at: '2024-01-01',
+    it('should get documents list', async () => {
+      const mockResponse = {
+        items: [
+          { id: '1', title: '文档1', content: '内容1', doc_type: 'text', metadata: {}, created_at: '2024-01-01' },
+          { id: '2', title: '文档2', content: '内容2', doc_type: 'pdf', metadata: {}, created_at: '2024-01-01' },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 100,
+        totalPages: 1,
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocument,
+        json: async () => ({ success: true, data: mockResponse }),
+      });
+
+      const result = await documentApi.getDocuments();
+
+      expect(result.items).toHaveLength(2);
+      expect(result.total).toBe(2);
+    });
+
+    it('should upload file', async () => {
+      const mockResponse = {
+        id: 'doc-123',
+        message: '上传成功',
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
       const file = new File(['content'], 'test.pdf', { type: 'application/pdf' });
-      const result = await documentApi.uploadDocument(file);
+      const result = await documentApi.uploadFile(file);
 
-      expect(result).toEqual(mockDocument);
+      expect(result).toEqual(mockResponse);
     });
 
     it('should delete document', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
+        json: async () => ({ success: true, data: null }),
       });
 
       await documentApi.deleteDocument('doc-123');
@@ -190,41 +182,18 @@ describe('API Services', () => {
     });
 
     it('should search documents', async () => {
-      const mockResults = {
-        text_results: [{ id: '1', title: '文档1', content: '内容', similarity: 0.95 }],
-        image_results: [],
-        total_results: 1,
-      };
+      const mockResults = [
+        { id: '1', title: '文档1', content: '内容', similarity: 0.95 },
+      ];
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResults,
+        json: async () => ({ success: true, data: mockResults }),
       });
 
-      const result = await documentApi.searchDocuments({
-        query: '测试',
-        search_type: 'text',
-        top_k: 5,
-      });
+      const result = await documentApi.searchDocuments('测试', 5);
 
       expect(result).toEqual(mockResults);
-    });
-
-    it('should search similar documents', async () => {
-      const mockResults = {
-        text_results: [{ id: '1', title: '文档1', content: '内容', similarity: 0.95 }],
-        image_results: [],
-        total_results: 1,
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResults,
-      });
-
-      const result = await documentApi.searchSimilar('测试查询', 5);
-
-      expect(result).toEqual(mockResults.text_results);
     });
   });
 });

@@ -1,0 +1,85 @@
+/* Dock 导航栏样式 */
+.dock-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: #fff;
+  border-top: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 48px;
+  padding: 0 24px;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+  z-index: 1000;
+}
+
+.dock-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  color: rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  transition: all 0.3s;
+  border-radius: 8px;
+}
+
+.dock-item:hover {
+  color: rgba(0, 0, 0, 0.85);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.dock-item.active {
+  color: #1890ff;
+  background: #e6f7ff;
+}
+
+.dock-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.dock-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .dock-bar {
+    gap: 24px;
+    padding: 0 16px;
+  }
+
+  .dock-item {
+    padding: 8px 12px;
+  }
+
+  .dock-label {
+    font-size: 11px;
+  }
+}
+
+/* 小屏幕移动端 */
+@media (max-width: 480px) {
+  .dock-bar {
+    gap: 16px;
+    padding: 0 8px;
+  }
+
+  .dock-item {
+    padding: 6px 8px;
+  }
+
+  .dock-icon {
+    font-size: 18px;
+  }
+
+  .dock-label {
+    font-size: 10px;
+  }
+}

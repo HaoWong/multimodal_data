@@ -50,6 +50,7 @@ def get_sessions(limit: int = 50, service: ChatService = Depends(get_service)):
     """获取会话列表"""
     from sqlalchemy import func
     from app.models.database_models import Conversation
+    from app.core.response import APIResponse
     
     db = service.db
     subq = db.query(
@@ -62,10 +63,12 @@ def get_sessions(limit: int = 50, service: ChatService = Depends(get_service)):
         subq, Conversation.session_id == subq.c.session_id
     ).filter(Conversation.created_at == subq.c.t).order_by(subq.c.t.desc()).limit(limit).all()
     
-    return [{"session_id": r[0].session_id, 
-             "last_message": r[0].content[:100], 
-             "last_time": r[1], 
-             "message_count": r[2]} for r in rs]
+    sessions = [{"session_id": r[0].session_id, 
+                 "last_message": r[0].content[:100] if r[0].content else "", 
+                 "last_time": r[1].isoformat() if r[1] else None, 
+                 "message_count": r[2]} for r in rs]
+    
+    return APIResponse.success(data=sessions, message="获取会话列表成功")
 
 
 @router.delete("/sessions/{session_id}", response_model=BaseResponse)

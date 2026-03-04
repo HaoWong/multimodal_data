@@ -1,15 +1,27 @@
 """
 Agent执行引擎
 支持技能编排和RAG增强
+
+使用统一任务执行引擎进行步骤执行
+Agent只负责任务规划
 """
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import os
+import uuid
 
-from app.skills import skill_registry, SkillResult
+from app.skills import skill_registry
+from app.skills.registry import SkillResult as TaskResult
 from app.services.ollama_client import ollama_client
+from app.core.task_engine import (
+    TaskContext,
+    TaskStatus,
+    task_engine,
+    create_task_context,
+    create_execution_config,
+)
 
 
 # 上传文件存储路径
@@ -58,9 +70,24 @@ class AgentStep:
     step_number: int
     skill_name: str
     params: Dict[str, Any]
-    result: Optional[SkillResult] = None
+    result: Optional[TaskResult] = None
     reasoning: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
+    execution_time: float = 0.0
+    status: str = "pending"  # pending, running, completed, failed
+    
+    def to_dict(self) -> Dict:
+        """转换为字典"""
+        return {
+            "step_number": self.step_number,
+            "skill_name": self.skill_name,
+            "params": self.params,
+            "result": self.result.to_dict() if self.result else None,
+            "reasoning": self.reasoning,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "execution_time": self.execution_time,
+            "status": self.status,
+        }
 
 
 @dataclass
@@ -74,13 +101,38 @@ class AgentTask:
     status: str = "pending"  # pending, running, completed, failed
     created_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
+    total_execution_time: float = 0.0
+    
+    def to_dict(self) -> Dict:
+        """转换为字典"""
+        return {
+            "task_id": self.task_id,
+            "description": self.description,
+            "context": self.context,
+            "steps": [step.to_dict() for step in self.steps],
+            "final_result": self.final_result,
+            "status": self.status,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "total_execution_time": self.total_execution_time,
+        }
 
 
 class AgentEngine:
-    """Agent执行引擎"""
+    """
+    Agent执行引擎
+    
+    职责：
+    - 任务规划（使用LLM分析任务并规划步骤）
+    - 步骤执行（通过统一任务执行引擎）
+    - 结果汇总
+    
+    步骤执行完全复用统一执行引擎
+    """
     
     def __init__(self):
         self.tasks: Dict[str, AgentTask] = {}
+        self._default_timeout = 300.0  # 默认超时5分钟
     
     async def plan_task(self, description: str, context: Dict = None) -> List[AgentStep]:
         """
@@ -163,6 +215,69 @@ class AgentEngine:
                 reasoning="直接询问LLM"
             )]
     
+    async def _execute_step(
+        self,
+        step: AgentStep,
+        task_context: TaskContext
+    ) -> TaskResult:
+        """
+        执行单个步骤
+        
+        使用统一任务执行引擎执行
+        """
+        step.status = "running"
+        step_start_time = datetime.now()
+        
+        # 处理文件路径参数
+        processed_params = self._process_file_params(step.params)
+        
+        # 获取skill信息
+        skill = skill_registry.get(step.skill_name)
+        if not skill:
+            step.status = "failed"
+            step.execution_time = (datetime.now() - step_start_time).total_seconds()
+            return TaskResult.error_result(
+                error=f"Skill not found: {step.skill_name}",
+                error_type="SkillNotFoundError"
+            )
+        
+        # 过滤参数：只保留 skill 需要的参数
+        if skill.metadata.parameters:
+            allowed_params = {p.name for p in skill.metadata.parameters}
+            filtered_params = {k: v for k, v in processed_params.items() if k in allowed_params}
+        else:
+            filtered_params = processed_params
+        
+        # 创建步骤执行上下文
+        step_context = create_task_context(
+            task_name=f"{task_context.task_name}:step_{step.step_number}",
+            task_type="agent_step",
+            params=filtered_params,
+            parent_task_id=task_context.task_id,
+        )
+        
+        # 使用统一执行引擎执行
+        # 优先使用skill自身的配置
+        config = create_execution_config(
+            timeout=skill.metadata.timeout or self._default_timeout,
+            max_retries=skill.metadata.max_retries,
+            retry_delay=skill.metadata.retry_delay,
+        )
+        
+        result = await task_engine.execute(
+            func=skill.execute,
+            context=step_context,
+            config=config,
+            **filtered_params
+        )
+        
+        # 更新步骤状态
+        step.result = result
+        step.execution_time = (datetime.now() - step_start_time).total_seconds()
+        step.status = "completed" if result.success else "failed"
+        
+        return result
+    
     async def execute_task(
         self,
         task_id: str,
@@ -182,7 +297,16 @@ class AgentEngine:
         self.tasks[task_id] = task
         task.status = "running"
         
+        # 创建Agent任务上下文
+        agent_context = create_task_context(
+            task_name=f"agent_task:{task_id}",
+            task_type="agent",
+            params={"description": description, "context": context},
+        )
+        
         yield f"🤔 正在分析任务: {description}\n"
+        
+        task_start_time = datetime.now()
         
         try:
             # 规划任务
@@ -196,20 +320,8 @@ class AgentEngine:
                 yield f"\n🔧 步骤 {step.step_number}: {step.skill_name}\n"
                 yield f"   原因: {step.reasoning}\n"
                 
-                # 处理文件路径参数（自动查找上传的文件）
-                processed_params = self._process_file_params(step.params)
-                
-                # 过滤参数：只保留 skill 需要的参数
-                skill_info = skill_registry.get(step.skill_name)
-                if skill_info and skill_info.parameters:
-                    allowed_params = {p.name for p in skill_info.parameters}
-                    filtered_params = {k: v for k, v in processed_params.items() if k in allowed_params}
-                else:
-                    filtered_params = processed_params
-                
-                # 调用skill
-                result = await skill_registry.invoke(step.skill_name, **filtered_params)
-                step.result = result
+                # 使用统一执行引擎执行步骤
+                result = await self._execute_step(step, agent_context)
                 
                 if result.success:
                     yield "   ✅ 成功\n"
@@ -222,6 +334,7 @@ class AgentEngine:
                     task.status = "failed"
                     task.final_result = f"步骤 {step.step_number} ({step.skill_name}) 执行失败: {result.error}"
                     task.completed_at = datetime.now()
+                    task.total_execution_time = (datetime.now() - task_start_time).total_seconds()
                     yield f"\n❌ 任务失败: 步骤 {step.step_number} 执行失败\n"
                     return
             
@@ -231,13 +344,61 @@ class AgentEngine:
             task.final_result = final_result
             task.status = "completed"
             task.completed_at = datetime.now()
+            task.total_execution_time = (datetime.now() - task_start_time).total_seconds()
             
             yield f"\n✨ 任务完成!\n\n{final_result}\n"
             
         except Exception as e:
             task.status = "failed"
             task.final_result = f"任务执行失败: {str(e)}"
+            task.completed_at = datetime.now()
+            task.total_execution_time = (datetime.now() - task_start_time).total_seconds()
             yield f"\n❌ 任务失败: {str(e)}\n"
+    
+    async def execute_task_sync(
+        self,
+        task_id: str,
+        description: str,
+        context: Dict = None
+    ) -> TaskResult:
+        """
+        同步执行任务（非流式）
+        
+        返回统一格式的TaskResult
+        """
+        # 收集所有输出
+        outputs = []
+        async for chunk in self.execute_task(task_id, description, context):
+            outputs.append(chunk)
+        
+        # 获取任务
+        task = self.tasks.get(task_id)
+        if not task:
+            return TaskResult.error_result(
+                error="任务未找到",
+                error_type="TaskNotFoundError"
+            )
+        
+        # 构建结果
+        if task.status == "completed":
+            return TaskResult.success_result(
+                data={
+                    "task_id": task.task_id,
+                    "description": task.description,
+                    "final_result": task.final_result,
+                    "steps": [step.to_dict() for step in task.steps],
+                    "total_execution_time": task.total_execution_time,
+                },
+                execution_time=task.total_execution_time,
+                metadata={"output": "".join(outputs)}
+            )
+        else:
+            return TaskResult.error_result(
+                error=task.final_result,
+                error_type="AgentExecutionError",
+                execution_time=task.total_execution_time,
+                metadata={"output": "".join(outputs)}
+            )
     
     async def _generate_final_result(self, task: AgentTask) -> str:
         """生成最终结果"""
@@ -278,6 +439,59 @@ class AgentEngine:
     def get_task(self, task_id: str) -> Optional[AgentTask]:
         """获取任务状态"""
         return self.tasks.get(task_id)
+    
+    def get_task_result(self, task_id: str) -> Optional[TaskResult]:
+        """获取任务执行结果（统一格式）"""
+        task = self.tasks.get(task_id)
+        if not task:
+            return None
+        
+        if task.status == "completed":
+            return TaskResult.success_result(
+                data={
+                    "task_id": task.task_id,
+                    "description": task.description,
+                    "final_result": task.final_result,
+                    "steps": [step.to_dict() for step in task.steps],
+                },
+                execution_time=task.total_execution_time
+            )
+        elif task.status == "failed":
+            return TaskResult.error_result(
+                error=task.final_result,
+                error_type="AgentExecutionError",
+                execution_time=task.total_execution_time
+            )
+        else:
+            return TaskResult(
+                success=False,
+                error="任务尚未完成",
+                status=TaskStatus.PENDING
+            )
+    
+    def list_tasks(self, status: Optional[str] = None) -> List[Dict]:
+        """列出所有任务"""
+        tasks = []
+        for task in self.tasks.values():
+            if status is None or task.status == status:
+                tasks.append(task.to_dict())
+        return tasks
+    
+    def cleanup_old_tasks(self, max_age_hours: int = 24):
+        """清理旧任务"""
+        from datetime import timedelta
+        
+        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+        to_remove = []
+        
+        for task_id, task in self.tasks.items():
+            if task.created_at < cutoff_time:
+                to_remove.append(task_id)
+        
+        for task_id in to_remove:
+            del self.tasks[task_id]
+        
+        return len(to_remove)
     
     def _process_file_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """

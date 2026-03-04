@@ -1,23 +1,32 @@
 """
 统一内容管理API
+整合文档、图片、视频等多种内容类型的管理接口
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
+from uuid import UUID
 import os
 import shutil
 import uuid
 
 from app.core.database import get_db
 from app.core.task_manager import task_manager
+from app.core.response import APIResponse, ErrorCode
 from app.models.content_models import Content, ContentType
-from app.models.schemas import BaseResponse
+from app.models.schemas import BaseResponse, DocumentCreate, DocumentResponse, SearchRequest, SearchResponse
+from app.models.database_models import Image
 from app.services.ollama_client import ollama_client
+from app.services.document_service import DocumentService
+from app.utils.file_parser import parse_file
 
 router = APIRouter(prefix="/contents", tags=["内容管理"])
 
 UPLOAD_DIR = "uploads/contents"
+IMAGE_UPLOAD_DIR = "uploads/images"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(IMAGE_UPLOAD_DIR, exist_ok=True)
 
 
 def get_content_type(filename: str) -> ContentType:
@@ -35,7 +44,9 @@ def get_content_type(filename: str) -> ContentType:
         return ContentType.TEXT
 
 
-@router.post("/upload", response_model=BaseResponse)
+# ==================== 统一内容管理端点 ====================
+
+@router.post("/upload")
 async def upload_content(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
@@ -301,10 +312,9 @@ async def upload_content(
     db.add(content)
     db.commit()
     
-    return BaseResponse(
-        success=True,
-        message=f"内容上传成功: {content_id}",
-        data={"id": str(content_id), "content_type": content_type.value}
+    return APIResponse.success(
+        data={"id": str(content_id), "content_type": content_type.value},
+        message=f"内容上传成功: {content_id}"
     )
 
 
@@ -321,7 +331,10 @@ def list_contents(
         query = query.filter(Content.content_type == content_type)
     
     contents = query.order_by(Content.created_at.desc()).offset(skip).limit(limit).all()
-    return [c.to_dict() for c in contents]
+    return APIResponse.success(
+        data=[c.to_dict() for c in contents],
+        message="获取内容列表成功"
+    )
 
 
 @router.post("/search")
@@ -372,7 +385,10 @@ async def search_contents(
             "similarity": row.similarity
         })
     
-    return {"results": results}
+    return APIResponse.success(
+        data={"results": results, "total": len(results)},
+        message="搜索完成"
+    )
 
 
 @router.get("/{content_id}")
@@ -387,19 +403,22 @@ def get_content_detail(content_id: str, db: Session = Depends(get_db)):
     if content.content_type.value == "VIDEO":
         url = f"/uploads/contents/{os.path.basename(content.source_path)}"
     
-    return {
-        "id": str(content.id),
-        "url": url,
-        "type": content.content_type.value.lower(),
-        "original_name": content.original_name,
-        "description": content.description,
-        "extracted_text": content.extracted_text,
-        "metadata": content.content_metadata,
-        "created_at": content.created_at.isoformat() if content.created_at else None
-    }
+    return APIResponse.success(
+        data={
+            "id": str(content.id),
+            "url": url,
+            "type": content.content_type.value.lower(),
+            "original_name": content.original_name,
+            "description": content.description,
+            "extracted_text": content.extracted_text,
+            "metadata": content.content_metadata,
+            "created_at": content.created_at.isoformat() if content.created_at else None
+        },
+        message="获取内容详情成功"
+    )
 
 
-@router.delete("/{content_id}", response_model=BaseResponse)
+@router.delete("/{content_id}")
 def delete_content(content_id: str, db: Session = Depends(get_db)):
     """删除内容"""
     content = db.query(Content).filter(Content.id == content_id).first()
@@ -413,4 +432,326 @@ def delete_content(content_id: str, db: Session = Depends(get_db)):
     db.delete(content)
     db.commit()
     
-    return BaseResponse(success=True, message="内容已删除")
+    return APIResponse.success(message="内容已删除")
+
+
+# ==================== 图片专用端点（向后兼容） ====================
+
+@router.post("/images/upload")
+async def upload_image(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """上传图片并生成描述（专用端点，向后兼容）"""
+    # 检查文件类型
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="只支持图片文件")
+    
+    # 生成UUID
+    file_id = uuid.uuid4()
+    file_ext = os.path.splitext(file.filename)[1]
+    file_path = os.path.join(IMAGE_UPLOAD_DIR, f"{file_id}{file_ext}")
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # 生成图片描述（使用视觉模型）
+    try:
+        description = await ollama_client.describe_image(file_path)
+    except Exception:
+        description = "无法生成图片描述"
+    
+    # 生成描述向量
+    try:
+        embeddings = await ollama_client.embed([description])
+        embedding = embeddings[0] if embeddings else None
+    except:
+        embedding = None
+    
+    # 保存到数据库
+    image = Image(
+        id=file_id,
+        image_path=file_path,
+        description=description,
+        description_embedding=embedding
+    )
+    db.add(image)
+    db.commit()
+    
+    return APIResponse.success(
+        data={
+            "id": str(file_id),
+            "image_url": f"/uploads/images/{file_id}{file_ext}",
+            "description": description
+        },
+        message="图片上传成功"
+    )
+
+
+@router.get("/images/list")
+def list_images(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """列出所有图片（专用端点，向后兼容）"""
+    images = db.query(Image).offset(skip).limit(limit).all()
+    
+    return APIResponse.success(
+        data=[
+            {
+                "id": str(img.id),
+                "url": f"/uploads/images/{os.path.basename(img.image_path)}",
+                "type": "image",
+                "description": img.description,
+                "created_at": img.created_at.isoformat() if img.created_at else None
+            }
+            for img in images
+        ],
+        message="获取图片列表成功"
+    )
+
+
+@router.get("/images/{image_id}")
+def get_image_detail(
+    image_id: str,
+    db: Session = Depends(get_db)
+):
+    """获取图片详情（专用端点，向后兼容）"""
+    img = db.query(Image).filter(Image.id == image_id).first()
+    
+    if not img:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    
+    return APIResponse.success(
+        data={
+            "id": str(img.id),
+            "url": f"/uploads/images/{os.path.basename(img.image_path)}",
+            "type": "image",
+            "description": img.description,
+            "metadata": img.image_metadata,
+            "created_at": img.created_at.isoformat() if img.created_at else None
+        },
+        message="获取图片详情成功"
+    )
+
+
+@router.post("/images/search")
+async def search_images(
+    query: str,
+    top_k: int = 5,
+    db: Session = Depends(get_db)
+):
+    """语义搜索图片（专用端点，向后兼容）"""
+    # 生成查询向量
+    embeddings = await ollama_client.embed([query])
+    query_embedding = embeddings[0]
+    
+    # 执行向量搜索
+    from sqlalchemy import text
+    sql = """
+    SELECT 
+        id,
+        image_path,
+        description,
+        1 - (description_embedding <=> :query_embedding) as similarity
+    FROM images
+    WHERE 1 - (description_embedding <=> :query_embedding) > 0.5
+    ORDER BY description_embedding <=> :query_embedding
+    LIMIT :top_k
+    """
+    
+    result = db.execute(
+        text(sql),
+        {
+            "query_embedding": str(query_embedding),
+            "top_k": top_k
+        }
+    )
+    
+    images = []
+    for row in result:
+        images.append({
+            "id": str(row.id),
+            "image_url": f"/uploads/images/{os.path.basename(row.image_path)}",
+            "description": row.description,
+            "similarity": row.similarity
+        })
+    
+    return APIResponse.success(
+        data={"results": images, "total": len(images)},
+        message="图片搜索完成"
+    )
+
+
+@router.delete("/images/{image_id}")
+def delete_image(
+    image_id: str,
+    db: Session = Depends(get_db)
+):
+    """删除图片（专用端点，向后兼容）"""
+    image = db.query(Image).filter(Image.id == image_id).first()
+    
+    if not image:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    
+    # 删除文件
+    if os.path.exists(image.image_path):
+        try:
+            os.remove(image.image_path)
+        except Exception as e:
+            print(f"删除图片文件失败: {e}")
+    
+    db.delete(image)
+    db.commit()
+    
+    return APIResponse.success(message="图片删除成功")
+
+
+# ==================== 文档专用端点（向后兼容） ====================
+
+@router.post("/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """上传文件并创建文档（专用端点，向后兼容）"""
+    # 解析文件内容
+    content = await parse_file(file)
+    
+    # 确定文档类型
+    doc_type = "text"
+    if file.filename.endswith('.pdf'):
+        doc_type = "pdf"
+    elif file.filename.endswith(('.docx', '.doc')):
+        doc_type = "docx"
+    
+    doc_data = DocumentCreate(
+        title=file.filename,
+        content=content,
+        doc_type=doc_type,
+        metadata={"original_filename": file.filename}
+    )
+    
+    service = DocumentService(db)
+    result = await service.create_document(doc_data)
+    
+    return APIResponse.success(
+        data=result,
+        message="文档上传成功"
+    )
+
+
+@router.get("/documents/list")
+def list_documents(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """列出所有文档（专用端点，向后兼容）"""
+    service = DocumentService(db)
+    results = service.list_documents(skip=skip, limit=limit)
+    
+    # 将SQLAlchemy模型转换为字典
+    documents = []
+    for doc in results:
+        documents.append({
+            "id": str(doc.id),
+            "title": doc.title,
+            "content": doc.content[:500] + "..." if len(doc.content) > 500 else doc.content,
+            "doc_type": doc.doc_type,
+            "metadata": doc.doc_metadata,
+            "created_at": doc.created_at.isoformat() if doc.created_at else None
+        })
+    
+    return APIResponse.success(
+        data=documents,
+        message="获取文档列表成功"
+    )
+
+
+@router.get("/documents/{doc_id}")
+def get_document(
+    doc_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """获取单个文档（专用端点，向后兼容）"""
+    service = DocumentService(db)
+    doc = service.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    
+    # 将SQLAlchemy模型转换为字典
+    document = {
+        "id": str(doc.id),
+        "title": doc.title,
+        "content": doc.content,
+        "doc_type": doc.doc_type,
+        "metadata": doc.doc_metadata,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None
+    }
+    
+    return APIResponse.success(
+        data=document,
+        message="获取文档详情成功"
+    )
+
+
+@router.delete("/documents/{doc_id}")
+def delete_document(
+    doc_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """删除文档（专用端点，向后兼容）"""
+    service = DocumentService(db)
+    success = service.delete_document(doc_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    
+    return APIResponse.success(message="文档删除成功")
+
+
+@router.post("/documents/search")
+async def search_documents(
+    request: SearchRequest,
+    db: Session = Depends(get_db)
+):
+    """语义搜索文档（专用端点，向后兼容）"""
+    service = DocumentService(db)
+    results = await service.search_similar(
+        query=request.query,
+        top_k=request.top_k
+    )
+    
+    return APIResponse.success(
+        data={
+            "text_results": results,
+            "total_results": len(results)
+        },
+        message="文档搜索完成"
+    )
+
+
+@router.post("/documents/create")
+async def create_document(
+    doc_data: DocumentCreate,
+    db: Session = Depends(get_db)
+):
+    """创建文档（专用端点，向后兼容）"""
+    service = DocumentService(db)
+    doc = await service.create_document(doc_data)
+    
+    # 将SQLAlchemy模型转换为字典
+    document = {
+        "id": str(doc.id),
+        "title": doc.title,
+        "content": doc.content,
+        "doc_type": doc.doc_type,
+        "metadata": doc.doc_metadata,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None
+    }
+    
+    return APIResponse.success(
+        data=document,
+        message="文档创建成功"
+    )

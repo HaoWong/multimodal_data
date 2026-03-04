@@ -1,19 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import json
 
 from app.core.config import get_settings
 from app.core.database import engine, Base, init_vector_extension
-from app.api import documents, chat, images, contents, skills, agent, tasks
+from app.core.response import CustomJSONResponse
+from app.core.middleware import register_exception_handlers, LoggingMiddleware
+from app.api import chat, contents, skills, agent, tasks
 from app.skills import skill_registry
 
-
-class CustomJSONResponse(JSONResponse):
-    """自定义 JSONResponse，确保中文字符不被转义"""
-    def render(self, content) -> bytes:
-        return json.dumps(content, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":")).encode("utf-8")
 
 settings = get_settings()
 
@@ -50,10 +46,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="多模态RAG系统 API",
     description="基于PostgreSQL + Ollama的多模态向量检索增强生成系统",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
     default_response_class=CustomJSONResponse
 )
+
+# 注册全局异常处理器
+register_exception_handlers(app)
+
+# 添加请求日志中间件
+app.add_middleware(LoggingMiddleware)
 
 # 配置CORS
 app.add_middleware(
@@ -65,13 +67,16 @@ app.add_middleware(
 )
 
 # 注册路由 - 统一使用 /api 前缀
-app.include_router(documents.router, prefix="/api")
-app.include_router(chat.router, prefix="/api")
-app.include_router(images.router, prefix="/api")
-app.include_router(contents.router, prefix="/api")  # 统一内容管理
-app.include_router(skills.router, prefix="/api")    # Skills管理
-app.include_router(agent.router, prefix="/api")     # Agent执行
-app.include_router(tasks.router, prefix="/api")     # 任务管理
+# 内容管理（已整合 documents 和 images）
+app.include_router(contents.router, prefix="/api")
+
+# 核心业务接口
+app.include_router(chat.router, prefix="/api")     # 对话功能
+app.include_router(agent.router, prefix="/api")    # Agent执行
+
+# 管理接口
+app.include_router(skills.router, prefix="/api")   # Skills管理
+app.include_router(tasks.router, prefix="/api")    # 任务管理
 
 # 静态文件服务
 from fastapi.staticfiles import StaticFiles
@@ -96,14 +101,20 @@ async def root():
     """根路径"""
     return {
         "message": "多模态RAG系统 API",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "docs": "/docs",
         "features": [
-            "多模态内容管理 (/contents)",
-            "Agent Skills (/skills)",
-            "智能体执行 (/agent)",
+            "统一内容管理 (/contents/*)",
+            "对话功能 (/chat/*)",
+            "Agent执行 (/agent/*)",
+            "Skills管理 (/skills/*)",
+            "任务管理 (/tasks/*)",
             "向量检索增强"
-        ]
+        ],
+        "migration_notice": {
+            "documents": "已迁移到 /api/contents/documents/*",
+            "images": "已迁移到 /api/contents/images/*"
+        }
     }
 
 

@@ -1,5 +1,6 @@
 """
 所有API端点测试 - 验证前后端接口匹配
+测试精简后的API路由结构
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -8,29 +9,70 @@ from fastapi.testclient import TestClient
 class TestAllAPIs:
     """测试所有API端点"""
 
-    # ==================== Documents API ====================
-    def test_documents_list(self, client: TestClient):
-        """测试获取文档列表"""
-        response = client.get("/api/documents/?skip=0&limit=10")
+    # ==================== Contents API (统一内容管理) ====================
+    def test_contents_list(self, client: TestClient):
+        """测试获取内容列表"""
+        response = client.get("/api/contents/?skip=0&limit=10")
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        assert data.get("success") is True
+        assert "data" in data
 
-    def test_documents_create(self, client: TestClient):
-        """测试创建文档"""
-        response = client.post("/api/documents/", json={
+    def test_contents_search(self, client: TestClient):
+        """测试搜索内容"""
+        response = client.post("/api/contents/search?query=测试&top_k=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+        assert "data" in data
+
+    # ==================== Contents/Documents API (向后兼容) ====================
+    def test_documents_list_compat(self, client: TestClient):
+        """测试获取文档列表（向后兼容端点）"""
+        response = client.get("/api/contents/documents/list?skip=0&limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+        assert "data" in data
+
+    def test_documents_create_compat(self, client: TestClient):
+        """测试创建文档（向后兼容端点）"""
+        response = client.post("/api/contents/documents/create", json={
             "title": "测试文档",
             "content": "测试内容",
             "doc_type": "text"
         })
         assert response.status_code in [200, 201]
+        data = response.json()
+        assert data.get("success") is True
 
-    def test_documents_search(self, client: TestClient):
-        """测试搜索文档"""
-        response = client.post("/api/documents/search", json={
+    def test_documents_search_compat(self, client: TestClient):
+        """测试搜索文档（向后兼容端点）"""
+        response = client.post("/api/contents/documents/search", json={
             "query": "测试",
             "top_k": 5
         })
         assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+        assert "data" in data
+
+    # ==================== Contents/Images API (向后兼容) ====================
+    def test_images_list_compat(self, client: TestClient):
+        """测试获取图片列表（向后兼容端点）"""
+        response = client.get("/api/contents/images/list")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+        assert "data" in data
+
+    def test_images_search_compat(self, client: TestClient):
+        """测试搜索图片（向后兼容端点）"""
+        response = client.post("/api/contents/images/search?query=测试&top_k=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+        assert "data" in data
 
     # ==================== Chat API ====================
     def test_chat_send(self, client: TestClient):
@@ -49,30 +91,6 @@ class TestAllAPIs:
         response = client.get("/api/chat/sessions?limit=10")
         assert response.status_code == 200
         assert isinstance(response.json(), list)
-
-    # ==================== Images API ====================
-    def test_images_list(self, client: TestClient):
-        """测试获取图片列表"""
-        response = client.get("/api/images/")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-
-    def test_images_search(self, client: TestClient):
-        """测试搜索图片"""
-        response = client.post("/api/images/search?query=测试&top_k=5")
-        assert response.status_code == 200
-
-    # ==================== Contents API ====================
-    def test_contents_list(self, client: TestClient):
-        """测试获取内容列表"""
-        response = client.get("/api/contents/?skip=0&limit=10")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-
-    def test_contents_search(self, client: TestClient):
-        """测试搜索内容"""
-        response = client.post("/api/contents/search?query=测试&top_k=5")
-        assert response.status_code == 200
 
     # ==================== Skills API ====================
     def test_skills_list(self, client: TestClient):
@@ -93,3 +111,35 @@ class TestAllAPIs:
         """测试获取Agent任务列表"""
         response = client.get("/api/agent/tasks?limit=10")
         assert response.status_code == 200
+
+    # ==================== Tasks API ====================
+    def test_tasks_list(self, client: TestClient):
+        """测试获取任务列表"""
+        response = client.get("/api/tasks/?limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert "tasks" in data
+
+    def test_tasks_running(self, client: TestClient):
+        """测试获取运行中的任务"""
+        response = client.get("/api/tasks/running")
+        assert response.status_code == 200
+        data = response.json()
+        assert "tasks" in data
+
+    # ==================== 根路径和Health ====================
+    def test_root_endpoint(self, client: TestClient):
+        """测试根路径"""
+        response = client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "message" in data
+        assert "version" in data
+        assert "migration_notice" in data
+
+    def test_health_endpoint(self, client: TestClient):
+        """测试健康检查"""
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("status") == "healthy"

@@ -18,10 +18,10 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResponse,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
-      const result = await chatApi.chat({
+      const result = await chatApi.sendMessage({
         message: longMessage,
         use_rag: false,
         history: [],
@@ -39,10 +39,10 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResponse,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
-      const result = await chatApi.chat({
+      const result = await chatApi.sendMessage({
         message: '',
         use_rag: false,
         history: [],
@@ -61,10 +61,10 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResponse,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
-      const result = await chatApi.chat({
+      await chatApi.sendMessage({
         message: specialMessage,
         use_rag: false,
         history: [],
@@ -88,10 +88,10 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResponse,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
-      const result = await chatApi.chat({
+      const result = await chatApi.sendMessage({
         message: unicodeMessage,
         use_rag: false,
         history: [],
@@ -115,10 +115,10 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResponse,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
-      const result = await chatApi.chat({
+      const result = await chatApi.sendMessage({
         message: 'Test',
         use_rag: false,
         history: longHistory as any,
@@ -131,7 +131,7 @@ describe('API Services Edge Cases', () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network timeout'));
 
       await expect(
-        chatApi.chat({
+        chatApi.sendMessage({
           message: 'Test',
           use_rag: false,
           history: [],
@@ -147,7 +147,7 @@ describe('API Services Edge Cases', () => {
       });
 
       await expect(
-        chatApi.chat({
+        chatApi.sendMessage({
           message: 'Test',
           use_rag: false,
           history: [],
@@ -163,7 +163,7 @@ describe('API Services Edge Cases', () => {
       });
 
       await expect(
-        chatApi.chat({
+        chatApi.sendMessage({
           message: 'Test',
           use_rag: false,
           history: [],
@@ -181,7 +181,7 @@ describe('API Services Edge Cases', () => {
           })
           .mockResolvedValueOnce({
             done: false,
-            value: new TextEncoder().encode('data: hello\n\n'),
+            value: new TextEncoder().encode('data: {"type": "content", "data": "hello"}\n\n'),
           })
           .mockResolvedValueOnce({
             done: true,
@@ -195,19 +195,16 @@ describe('API Services Edge Cases', () => {
         },
       });
 
-      const onChunk = jest.fn();
-      const onComplete = jest.fn();
-      const onError = jest.fn();
+      const onContent = jest.fn();
+      const onDone = jest.fn();
 
-      await chatApi.chatStream(
+      await chatApi.sendMessageStream(
         { message: 'Test', use_rag: false, history: [] },
-        onChunk,
-        onComplete,
-        onError
+        { onContent, onDone }
       );
 
-      expect(onChunk).toHaveBeenCalledWith('hello');
-      expect(onComplete).toHaveBeenCalled();
+      expect(onContent).toHaveBeenCalledWith('hello');
+      expect(onDone).toHaveBeenCalled();
     });
 
     it('should handle stream with malformed data', async () => {
@@ -230,46 +227,26 @@ describe('API Services Edge Cases', () => {
         },
       });
 
-      const onChunk = jest.fn();
-      const onComplete = jest.fn();
-      const onError = jest.fn();
+      const onContent = jest.fn();
+      const onDone = jest.fn();
 
-      await chatApi.chatStream(
+      await chatApi.sendMessageStream(
         { message: 'Test', use_rag: false, history: [] },
-        onChunk,
-        onComplete,
-        onError
+        { onContent, onDone }
       );
 
-      expect(onComplete).toHaveBeenCalled();
+      expect(onDone).toHaveBeenCalled();
     });
 
-    it('should handle empty history response', async () => {
+    it('should handle empty sessions response', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => [],
+        json: async () => ({ success: true, data: { sessions: [] } }),
       });
 
-      const result = await chatApi.getHistory('session-123');
+      const result = await chatApi.getSessions();
 
-      expect(result).toEqual([]);
-    });
-
-    it('should handle history with special characters', async () => {
-      const mockHistory = [
-        { role: 'user', content: '<script>alert("xss")</script>', timestamp: '2024-01-01' },
-        { role: 'assistant', content: '🎉 Emoji test', timestamp: '2024-01-01' },
-      ];
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockHistory,
-      });
-
-      const result = await chatApi.getHistory('session-123');
-
-      expect(result).toHaveLength(2);
-      expect(result[0].content).toBe('<script>alert("xss")</script>');
+      expect(result.sessions).toEqual([]);
     });
   });
 
@@ -286,7 +263,7 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocument,
+        json: async () => ({ success: true, data: mockDocument }),
       });
 
       const result = await documentApi.createDocument({
@@ -309,7 +286,7 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocument,
+        json: async () => ({ success: true, data: mockDocument }),
       });
 
       const result = await documentApi.createDocument({
@@ -323,12 +300,13 @@ describe('API Services Edge Cases', () => {
     it('should handle empty document list', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => [],
+        json: async () => ({ success: true, data: { items: [], total: 0, page: 1, pageSize: 100, totalPages: 0 } }),
       });
 
-      const result = await documentApi.listDocuments();
+      const result = await documentApi.getDocuments();
 
-      expect(result).toEqual([]);
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
     });
 
     it('should handle very large document list', async () => {
@@ -343,54 +321,55 @@ describe('API Services Edge Cases', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocuments,
+        json: async () => ({
+          success: true,
+          data: {
+            items: mockDocuments,
+            total: 1000,
+            page: 1,
+            pageSize: 1000,
+            totalPages: 1,
+          },
+        }),
       });
 
-      const result = await documentApi.listDocuments();
+      const result = await documentApi.getDocuments(0, 1000);
 
-      expect(result).toHaveLength(1000);
+      expect(result.items).toHaveLength(1000);
     });
 
     it('should handle upload with empty file', async () => {
-      const mockDocument = {
+      const mockResponse = {
         id: 'doc-123',
-        title: 'empty.txt',
-        content: '',
-        doc_type: 'text',
-        metadata: {},
-        created_at: '2024-01-01',
+        message: '上传成功',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocument,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
       const file = new File([''], 'empty.txt', { type: 'text/plain' });
-      const result = await documentApi.uploadDocument(file);
+      const result = await documentApi.uploadFile(file);
 
-      expect(result.content).toBe('');
+      expect(result.id).toBe('doc-123');
     });
 
     it('should handle upload with special filename', async () => {
-      const mockDocument = {
+      const mockResponse = {
         id: 'doc-123',
-        title: 'file with spaces & special chars.txt',
-        content: 'Content',
-        doc_type: 'text',
-        metadata: {},
-        created_at: '2024-01-01',
+        message: '上传成功',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockDocument,
+        json: async () => ({ success: true, data: mockResponse }),
       });
 
       const file = new File(['content'], 'file with spaces & special chars.txt', { type: 'text/plain' });
-      const result = await documentApi.uploadDocument(file);
+      const result = await documentApi.uploadFile(file);
 
-      expect(result.title).toBe('file with spaces & special chars.txt');
+      expect(result.id).toBe('doc-123');
     });
 
     it('should handle delete non-existent document', async () => {
@@ -404,80 +383,45 @@ describe('API Services Edge Cases', () => {
     });
 
     it('should handle search with empty query', async () => {
-      const mockResults = {
-        text_results: [],
-        image_results: [],
-        total_results: 0,
-      };
+      const mockResults: any[] = [];
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResults,
+        json: async () => ({ success: true, data: mockResults }),
       });
 
-      const result = await documentApi.searchDocuments({
-        query: '',
-        search_type: 'text',
-        top_k: 5,
-      });
+      const result = await documentApi.searchDocuments('', 5);
 
-      expect(result.total_results).toBe(0);
+      expect(result).toHaveLength(0);
     });
 
     it('should handle search with special characters', async () => {
-      const mockResults = {
-        text_results: [],
-        image_results: [],
-        total_results: 0,
-      };
+      const mockResults: any[] = [];
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockResults,
+        json: async () => ({ success: true, data: mockResults }),
       });
 
-      const result = await documentApi.searchDocuments({
-        query: 'test\' OR \'1\'=\'1',
-        search_type: 'text',
-        top_k: 5,
-      });
+      await documentApi.searchDocuments("test' OR '1'='1", 5);
 
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining("test' OR '1'='1"),
-        })
+        expect.stringContaining(encodeURIComponent("test' OR '1'='1")),
+        expect.any(Object)
       );
-    });
-
-    it('should handle searchSimilar with no results', async () => {
-      const mockResults = {
-        text_results: [],
-        image_results: [],
-        total_results: 0,
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResults,
-      });
-
-      const result = await documentApi.searchSimilar('query', 5);
-
-      expect(result).toEqual([]);
     });
 
     it('should handle network error on list', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
 
-      await expect(documentApi.listDocuments()).rejects.toThrow('Network error');
+      await expect(documentApi.getDocuments()).rejects.toThrow('Network error');
     });
 
     it('should handle timeout on upload', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Timeout'));
 
       const file = new File(['content'], 'test.txt', { type: 'text/plain' });
-      await expect(documentApi.uploadDocument(file)).rejects.toThrow('Timeout');
+      await expect(documentApi.uploadFile(file)).rejects.toThrow('Timeout');
     });
   });
 });

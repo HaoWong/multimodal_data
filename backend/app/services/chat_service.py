@@ -1,13 +1,17 @@
 """对话服务 - 重构后，完整RAG集成（支持多模态）"""
 from sqlalchemy.orm import Session
-from typing import List, Dict, AsyncGenerator, Any
+from typing import List, Dict, AsyncGenerator, Any, Optional
 import uuid
 import json
+import re
 
-from app.models.database_models import Conversation
+from app.models.database_models import Conversation, Document
+from app.models.content_models import Content, ContentType
 from app.models.schemas import ChatRequest, ChatMessage
 from app.services.ollama_client import ollama_client
+from app.services.content_service import ContentService
 from app.core.config import get_settings
+from app.core.base_service import ServiceResponse
 from sqlalchemy import text
 
 settings = get_settings()
@@ -18,6 +22,8 @@ class ChatService:
     
     def __init__(self, db: Session):
         self.db = db
+        # 使用ContentService进行内容检索
+        self.content_service = ContentService(db)
     
     async def chat(self, request: ChatRequest) -> Dict:
         """非流式对话 - 返回完整响应和引用来源"""
@@ -88,9 +94,9 @@ class ChatService:
             doc_sources = await self._search_documents(message)
             print(f"[RAG]    找到 {len(doc_sources)} 个知识库文档")
             
-            # 2. 检索 contents 表（图片+视频+文档）
+            # 2. 使用ContentService检索 contents 表（图片+视频+文档）
             print("[RAG] 2. 检索内容库(contents)...")
-            content_sources = await self._search_contents(message)
+            content_sources = await self._search_contents_with_service(message)
             print(f"[RAG]    找到 {len(content_sources)} 个内容")
             
             # 3. 合并所有来源，按相似度排序
@@ -189,55 +195,43 @@ class ChatService:
             print(f"知识库检索失败: {e}")
             return []
     
-    async def _search_contents(self, query: str) -> List[Dict]:
-        """检索内容库（contents表 - 图片+视频+文档）"""
+    async def _search_contents_with_service(self, query: str) -> List[Dict]:
+        """
+        使用ContentService检索内容库
+        替代原有的直接SQL查询方式
+        """
         try:
-            # 生成查询向量
-            embeddings = await ollama_client.embed([query])
-            query_embedding = embeddings[0]
-            
-            sql = """
-            SELECT 
-                id,
-                content_type,
-                original_name,
-                extracted_text,
-                description,
-                1 - (embedding <=> :query_embedding) as similarity
-            FROM contents
-            WHERE 1 - (embedding <=> :query_embedding) > 0.5
-            ORDER BY embedding <=> :query_embedding
-            LIMIT 3
-            """
-            
-            result = self.db.execute(
-                text(sql),
-                {"query_embedding": str(query_embedding)}
+            # 使用ContentService进行语义搜索
+            result = await self.content_service.search(
+                query=query,
+                top_k=3,
+                threshold=settings.similarity_threshold or 0.5
             )
             
+            if not result.success:
+                print(f"[ChatService] 内容库检索失败: {result.message}")
+                return []
+            
             sources = []
-            for row in result:
-                # 处理 content_type，确保是字符串
-                content_type = row.content_type
-                if content_type is None:
-                    content_type = "TEXT"
-                elif isinstance(content_type, str):
-                    # 已经是字符串，直接使用
-                    pass
+            for item in result.data:
+                # 处理content_type
+                content_type = item.get("content_type", "TEXT")
+                if isinstance(content_type, ContentType):
+                    content_type = content_type.value
                 elif hasattr(content_type, 'value'):
                     content_type = content_type.value
                 elif hasattr(content_type, 'name'):
                     content_type = content_type.name
                 else:
                     content_type = str(content_type)
-
-                text_content = row.extracted_text or row.description or ""
-
+                
+                text_content = item.get("extracted_text") or item.get("description") or ""
+                
                 sources.append({
-                    "id": str(row.id),
-                    "title": row.original_name,
+                    "id": str(item.get("id")),
+                    "title": item.get("original_name", "未命名"),
                     "text": text_content[:500] + "..." if len(text_content) > 500 else text_content,
-                    "similarity": round(float(row.similarity), 3),
+                    "similarity": round(float(item.get("similarity", 0)), 3),
                     "content_type": content_type,
                     "source": "内容库"
                 })
@@ -245,6 +239,8 @@ class ChatService:
             return sources
         except Exception as e:
             print(f"内容库检索失败: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _build_messages(
@@ -321,8 +317,6 @@ class ChatService:
         检测用户消息是否是分析上传文件的请求
         如果是，返回最近上传的文件信息
         """
-        import re
-
         # 检测分析文件的关键词（更广泛）
         analysis_keywords = ['分析', '查看', '检查', '处理', '描述', '介绍', '总结', '提取', 
                            '打分', '评分', '评价', '评估', '审查', '检查', '看看', '怎么样',
@@ -356,54 +350,38 @@ class ChatService:
 
         print(f"[RAG] 文件分析检测: 提取到文件名={extracted_filename}")
 
-        # 从数据库查找文件
-        from app.models.content_models import Content
-
-        query = self.db.query(Content)
+        # 使用ContentService查找文件
         content = None
 
         if extracted_filename:
             # 如果提取到文件名，优先匹配
-            content = query.filter(
-                Content.original_name.ilike(f'%{extracted_filename}%')
-            ).order_by(Content.created_at.desc()).first()
-
+            content = self.content_service.get_by_original_name(extracted_filename)
+            
             if not content:
                 # 尝试匹配文件名的一部分
                 base_name = extracted_filename.rsplit('.', 1)[0]
-                content = query.filter(
-                    Content.original_name.ilike(f'%{base_name}%')
-                ).order_by(Content.created_at.desc()).first()
+                # 使用list方法配合过滤
+                result = self.content_service.list(
+                    limit=1,
+                    filters=None
+                )
+                if result.success and result.data:
+                    # 手动过滤
+                    for item in result.data:
+                        if extracted_filename.lower() in item.original_name.lower() or \
+                           base_name.lower() in item.original_name.lower():
+                            content = item
+                            break
         
         # 如果没有匹配到具体文件，但用户明确提到"这个文件"、"上传的文件"等
         if not content and refers_to_file:
             # 返回最近上传的文件
-            content = query.order_by(Content.created_at.desc()).first()
+            content = self.content_service.get_latest()
             print(f"[RAG] 未提取到具体文件名，使用最近上传的文件")
 
         if content:
-            # 处理 content_type
-            content_type_value = content.content_type
-            if hasattr(content_type_value, 'value'):
-                content_type_value = content_type_value.value
-            elif hasattr(content_type_value, 'name'):
-                content_type_value = content_type_value.name
-            else:
-                content_type_value = str(content_type_value)
-
-            print(f"[RAG] 找到文件: {content.original_name}, 类型: {content_type_value}")
-
-            # 根据内容类型构建返回数据
-            text_content = content.extracted_text or content.description or ""
-
-            return {
-                "id": str(content.id),
-                "title": content.original_name,
-                "text": text_content[:1000] + "..." if len(text_content) > 1000 else text_content,
-                "similarity": 1.0,  # 直接匹配的文件给最高相似度
-                "content_type": content_type_value,
-                "source": "内容库"
-            }
+            # 使用ContentService的方法转换结果
+            return self.content_service.to_search_result(content, similarity=1.0)
 
         return None
 

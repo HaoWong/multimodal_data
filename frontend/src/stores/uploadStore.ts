@@ -1,173 +1,76 @@
 /**
- * 上传任务状态管理 - 支持三阶段进度：上传、AI分析、完成
+ * Upload Store - 复用 AppStore 的统一状态管理
+ * 保持向后兼容的接口，内部调用 appStore 的方法
+ * @deprecated 建议直接使用 useAppStore 或 useUploadState/useUploadActions
  */
-import { create } from 'zustand';
+import {
+  useAppStore,
+  useUploadState,
+  useUploadActions,
+  type UploadTask,
+} from './appStore';
 
-export interface UploadTask {
-  id: string;
-  fileName: string;
-  fileType: 'image' | 'video' | 'document';
-  // 总进度 0-100
-  progress: number;
-  // 当前阶段
-  phase: 'uploading' | 'analyzing' | 'completed' | 'error';
-  // 阶段进度 0-100
-  phaseProgress: number;
-  status: 'pending' | 'uploading' | 'processing' | 'completed' | 'error';
-  message?: string;
-  result?: any;
-  createdAt: number;
-}
+// 为了保持向后兼容，导出 useUploadStore
+// 它返回与原来相同的接口，但内部使用 appStore
+export const useUploadStore = () => {
+  const { tasks } = useUploadState();
+  const {
+    addUploadTask,
+    updateUploadProgress,
+    startAnalyzing,
+    updateAnalyzingProgress,
+    completeUploadTask,
+    failUploadTask,
+    removeUploadTask,
+    clearCompletedUploads,
+    getActiveUploadCount,
+  } = useUploadActions();
+  const { uploadPanelOpen, sidebarOpen } = useAppStore((state) => ({
+    uploadPanelOpen: state.ui.uploadPanelOpen,
+    sidebarOpen: state.ui.sidebarOpen,
+  }));
+  const { toggleUploadPanel, setUploadPanelOpen } = useAppStore((state) => ({
+    toggleUploadPanel: state.toggleUploadPanel,
+    setUploadPanelOpen: state.setUploadPanelOpen,
+  }));
 
-interface UploadStore {
-  tasks: UploadTask[];
-  isPanelOpen: boolean;
-  
-  // 添加任务
-  addTask: (task: Omit<UploadTask, 'id' | 'createdAt' | 'phase' | 'phaseProgress'>) => string;
-  // 更新上传进度 (0-50% 占总进度的比例)
-  updateUploadProgress: (id: string, percent: number) => void;
-  // 开始 AI 分析阶段
-  startAnalyzing: (id: string, message?: string) => void;
-  // 更新 AI 分析进度 (50-90% 占总进度的比例)
-  updateAnalyzingProgress: (id: string, percent: number) => void;
-  // 完成任务 (100%)
-  completeTask: (id: string, result?: any) => void;
-  // 失败任务
-  failTask: (id: string, message: string) => void;
-  // 移除任务
-  removeTask: (id: string) => void;
-  // 清空已完成任务
-  clearCompleted: () => void;
-  // 打开/关闭面板
-  togglePanel: () => void;
-  setPanelOpen: (open: boolean) => void;
-  // 获取进行中的任务数
-  getActiveCount: () => number;
-}
+  return {
+    // 状态
+    tasks,
+    isPanelOpen: uploadPanelOpen,
 
-export const useUploadStore = create<UploadStore>((set, get) => ({
-  tasks: [],
-  isPanelOpen: false,
+    // 方法 - 保持与原接口一致
+    addTask: addUploadTask,
+    updateUploadProgress,
+    startAnalyzing,
+    updateAnalyzingProgress,
+    completeTask: completeUploadTask,
+    failTask: failUploadTask,
+    removeTask: removeUploadTask,
+    clearCompleted: clearCompletedUploads,
+    togglePanel: toggleUploadPanel,
+    setPanelOpen: setUploadPanelOpen,
+    getActiveCount: getActiveUploadCount,
+  };
+};
 
-  addTask: (task) => {
-    const id = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const newTask: UploadTask = {
-      ...task,
-      id,
-      phase: 'uploading',
-      phaseProgress: 0,
-      createdAt: Date.now(),
-    };
-    set((state) => ({
-      tasks: [newTask, ...state.tasks],
-    }));
-    return id;
-  },
+// 导出类型
+export type { UploadTask };
 
-  // 上传阶段占总进度的 0-50%
-  updateUploadProgress: (id, percent) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              phase: 'uploading',
-              phaseProgress: percent,
-              progress: Math.round(percent * 0.5), // 0-50%
-            }
-          : t
-      ),
-    }));
-  },
+// 导出便捷的选择器 hooks
+export { useUploadState, useUploadActions };
 
-  // 开始 AI 分析阶段
-  startAnalyzing: (id, message) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              phase: 'analyzing',
-              phaseProgress: 0,
-              progress: 50,
-              message: message || 'AI分析中...',
-            }
-          : t
-      ),
-    }));
-  },
-
-  // AI分析阶段占总进度的 50-90%
-  updateAnalyzingProgress: (id, percent) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              phase: 'analyzing',
-              phaseProgress: percent,
-              progress: Math.round(50 + percent * 0.4), // 50-90%
-            }
-          : t
-      ),
-    }));
-  },
-
-  // 完成阶段 100%
-  completeTask: (id, result) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              phase: 'completed',
-              phaseProgress: 100,
-              progress: 100,
-              status: 'completed',
-              message: '完成',
-              result,
-            }
-          : t
-      ),
-    }));
-  },
-
-  failTask: (id, message) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id
-          ? { ...t, phase: 'error', status: 'error', message }
-          : t
-      ),
-    }));
-  },
-
-  removeTask: (id) => {
-    set((state) => ({
-      tasks: state.tasks.filter((t) => t.id !== id),
-    }));
-  },
-
-  clearCompleted: () => {
-    set((state) => ({
-      tasks: state.tasks.filter(
-        (t) => t.status !== 'completed' && t.status !== 'error'
-      ),
-    }));
-  },
-
-  togglePanel: () => {
-    set((state) => ({ isPanelOpen: !state.isPanelOpen }));
-  },
-
-  setPanelOpen: (open) => {
-    set({ isPanelOpen: open });
-  },
-
-  getActiveCount: () => {
-    return get().tasks.filter(
-      (t) => t.status === 'pending' || t.status === 'uploading' || t.status === 'processing'
-    ).length;
-  },
-}));
+/**
+ * 使用示例:
+ *
+ * // 方式1: 使用兼容的 useUploadStore (获取完整状态)
+ * const { tasks, addTask, isPanelOpen, togglePanel } = useUploadStore();
+ *
+ * // 方式2: 使用选择器优化性能 (推荐)
+ * const { tasks } = useUploadState();
+ * const { addUploadTask, completeUploadTask } = useUploadActions();
+ *
+ * // 方式3: 直接使用 useAppStore
+ * const tasks = useAppStore(state => state.tasks);
+ * const addTask = useAppStore(state => state.addUploadTask);
+ */

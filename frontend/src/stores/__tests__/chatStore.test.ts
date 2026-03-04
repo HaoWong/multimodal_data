@@ -1,4 +1,4 @@
-import { useChatStore } from '../chatStore';
+import { useAppStore } from '../appStore';
 import { chatApi } from '../../services/api';
 
 // Mock the API
@@ -7,155 +7,156 @@ jest.mock('../../services/api');
 describe('chatStore', () => {
   beforeEach(() => {
     // Reset store state before each test
-    useChatStore.setState({
+    useAppStore.setState({
       currentSessionId: null,
       sessions: [],
       messages: [],
-      isLoading: false,
       useRag: true,
+      recentFiles: [],
+      tasks: [],
+      ui: {
+        isLoading: false,
+        error: null,
+        sidebarOpen: true,
+        uploadPanelOpen: false,
+        theme: 'light',
+      },
+      user: {
+        userId: null,
+        userName: null,
+        preferences: {},
+      },
     });
     jest.clearAllMocks();
   });
 
   describe('sendMessage', () => {
     it('should send message and update state', async () => {
-      const mockStream = jest.fn().mockImplementation(async function* () {
-        yield '你好';
-        yield '！';
-        yield '有什么';
-        yield '可以帮助';
-        yield '你的？';
-      });
-
-      (chatApi.chatStream as jest.Mock).mockImplementation(
-        async (_data: any, onChunk: any, onComplete: any) => {
-          for await (const chunk of mockStream()) {
-            onChunk(chunk);
+      (chatApi.sendMessageStream as jest.Mock).mockImplementation(
+        async (_data: any, callbacks: any) => {
+          const chunks = ['你好', '！', '有什么', '可以帮助', '你的？'];
+          for (const chunk of chunks) {
+            callbacks.onContent(chunk);
           }
-          onComplete();
+          callbacks.onDone?.();
         }
       );
 
-      const { sendMessage } = useChatStore.getState();
+      const { sendMessage } = useAppStore.getState();
       await sendMessage('你好');
 
-      const state = useChatStore.getState();
+      const state = useAppStore.getState();
       expect(state.messages).toHaveLength(2); // user + assistant
       expect(state.messages[0].role).toBe('user');
       expect(state.messages[0].content).toBe('你好');
       expect(state.messages[1].role).toBe('assistant');
       expect(state.messages[1].content).toBe('你好！有什么可以帮助你的？');
-      expect(state.isLoading).toBe(false);
+      expect(state.ui.isLoading).toBe(false);
     });
 
     it('should handle send message error', async () => {
-      (chatApi.chatStream as jest.Mock).mockImplementation(
-        async (_data: any, _onChunk: any, _onComplete: any, onError: any) => {
-          onError(new Error('Network error'));
+      (chatApi.sendMessageStream as jest.Mock).mockImplementation(
+        async (_data: any, _callbacks: any) => {
+          throw new Error('Network error');
         }
       );
 
-      const { sendMessage } = useChatStore.getState();
+      const { sendMessage } = useAppStore.getState();
       await sendMessage('你好');
 
-      const state = useChatStore.getState();
+      const state = useAppStore.getState();
       expect(state.messages).toHaveLength(2);
-      expect(state.messages[1].content).toBe('抱歉，发生了错误，请重试。');
-      expect(state.isLoading).toBe(false);
+      expect(state.messages[1].content).toContain('错误');
+      expect(state.ui.isLoading).toBe(false);
     });
 
     it('should use RAG when enabled', async () => {
-      const mockStream = jest.fn().mockImplementation(async function* () {
-        yield '回复';
-      });
-
-      (chatApi.chatStream as jest.Mock).mockImplementation(
-        async (data: any, onChunk: any, onComplete: any) => {
+      (chatApi.sendMessageStream as jest.Mock).mockImplementation(
+        async (data: any, callbacks: any) => {
           expect(data.use_rag).toBe(true);
-          for await (const chunk of mockStream()) {
-            onChunk(chunk);
-          }
-          onComplete();
+          callbacks.onContent('回复');
+          callbacks.onDone?.();
         }
       );
 
-      const { sendMessage } = useChatStore.getState();
+      const { sendMessage } = useAppStore.getState();
       await sendMessage('测试');
 
-      expect(chatApi.chatStream).toHaveBeenCalledWith(
+      expect(chatApi.sendMessageStream).toHaveBeenCalledWith(
         expect.objectContaining({ use_rag: true }),
-        expect.any(Function),
-        expect.any(Function),
-        expect.any(Function)
+        expect.objectContaining({
+          onContent: expect.any(Function),
+          onDone: expect.any(Function),
+        })
       );
     });
   });
 
   describe('createNewSession', () => {
     it('should create new session', () => {
-      const { createNewSession } = useChatStore.getState();
+      const { createNewSession } = useAppStore.getState();
       createNewSession();
 
-      const state = useChatStore.getState();
+      const state = useAppStore.getState();
       expect(state.sessions).toHaveLength(1);
       expect(state.currentSessionId).toBe(state.sessions[0].id);
       expect(state.messages).toHaveLength(0);
     });
 
     it('should create multiple sessions', () => {
-      const { createNewSession } = useChatStore.getState();
+      const { createNewSession } = useAppStore.getState();
       createNewSession();
       createNewSession();
       createNewSession();
 
-      const state = useChatStore.getState();
+      const state = useAppStore.getState();
       expect(state.sessions).toHaveLength(3);
     });
   });
 
   describe('switchSession', () => {
     it('should switch to existing session', () => {
-      const { createNewSession, switchSession } = useChatStore.getState();
+      const { createNewSession, switchSession } = useAppStore.getState();
       createNewSession();
-      
-      const firstSessionId = useChatStore.getState().currentSessionId;
-      
+
+      const firstSessionId = useAppStore.getState().currentSessionId;
+
       createNewSession();
-      const secondSessionId = useChatStore.getState().currentSessionId;
-      
+      const secondSessionId = useAppStore.getState().currentSessionId;
+
       switchSession(firstSessionId!);
-      
-      expect(useChatStore.getState().currentSessionId).toBe(firstSessionId);
+
+      expect(useAppStore.getState().currentSessionId).toBe(firstSessionId);
     });
   });
 
   describe('deleteSession', () => {
     it('should delete session', () => {
-      const { createNewSession, deleteSession } = useChatStore.getState();
+      const { createNewSession, deleteSession } = useAppStore.getState();
       createNewSession();
       createNewSession();
-      
-      const sessions = useChatStore.getState().sessions;
+
+      const sessions = useAppStore.getState().sessions;
       const sessionIdToDelete = sessions[0].id;
-      
+
       deleteSession(sessionIdToDelete);
-      
-      const state = useChatStore.getState();
+
+      const state = useAppStore.getState();
       expect(state.sessions).toHaveLength(1);
       expect(state.sessions.find(s => s.id === sessionIdToDelete)).toBeUndefined();
     });
 
     it('should switch to another session when deleting current', () => {
-      const { createNewSession, deleteSession } = useChatStore.getState();
+      const { createNewSession, deleteSession } = useAppStore.getState();
       createNewSession();
       createNewSession();
-      
-      const sessions = useChatStore.getState().sessions;
-      const currentId = useChatStore.getState().currentSessionId;
-      
+
+      const sessions = useAppStore.getState().sessions;
+      const currentId = useAppStore.getState().currentSessionId;
+
       deleteSession(currentId!);
-      
-      const state = useChatStore.getState();
+
+      const state = useAppStore.getState();
       expect(state.currentSessionId).not.toBe(currentId);
       expect(state.currentSessionId).toBeDefined();
     });
@@ -163,68 +164,57 @@ describe('chatStore', () => {
 
   describe('setUseRag', () => {
     it('should toggle RAG setting', () => {
-      const { setUseRag } = useChatStore.getState();
-      
-      expect(useChatStore.getState().useRag).toBe(true);
-      
+      const { setUseRag } = useAppStore.getState();
+
+      expect(useAppStore.getState().useRag).toBe(true);
+
       setUseRag(false);
-      expect(useChatStore.getState().useRag).toBe(false);
-      
+      expect(useAppStore.getState().useRag).toBe(false);
+
       setUseRag(true);
-      expect(useChatStore.getState().useRag).toBe(true);
+      expect(useAppStore.getState().useRag).toBe(true);
     });
   });
 
   describe('clearMessages', () => {
     it('should clear all messages', async () => {
-      const mockStream = jest.fn().mockImplementation(async function* () {
-        yield '回复';
-      });
-
-      (chatApi.chatStream as jest.Mock).mockImplementation(
-        async (_data: any, onChunk: any, onComplete: any) => {
-          for await (const chunk of mockStream()) {
-            onChunk(chunk);
-          }
-          onComplete();
+      (chatApi.sendMessageStream as jest.Mock).mockImplementation(
+        async (_data: any, callbacks: any) => {
+          callbacks.onContent('回复');
+          callbacks.onDone?.();
         }
       );
 
-      const { sendMessage, clearMessages } = useChatStore.getState();
+      const { sendMessage, clearMessages } = useAppStore.getState();
       await sendMessage('你好');
-      
-      expect(useChatStore.getState().messages).toHaveLength(2);
-      
+
+      expect(useAppStore.getState().messages).toHaveLength(2);
+
       clearMessages();
-      
-      expect(useChatStore.getState().messages).toHaveLength(0);
+
+      expect(useAppStore.getState().messages).toHaveLength(0);
     });
   });
 
   describe('session history', () => {
     it('should maintain session history across messages', async () => {
       const messages: string[] = [];
-      const mockStream = jest.fn().mockImplementation(async function* () {
-        yield '回复';
-      });
 
-      (chatApi.chatStream as jest.Mock).mockImplementation(
-        async (data: any, onChunk: any, onComplete: any) => {
+      (chatApi.sendMessageStream as jest.Mock).mockImplementation(
+        async (data: any, callbacks: any) => {
           messages.push(data.message);
-          for await (const chunk of mockStream()) {
-            onChunk(chunk);
-          }
-          onComplete();
+          callbacks.onContent('回复');
+          callbacks.onDone?.();
         }
       );
 
-      const { sendMessage } = useChatStore.getState();
-      
+      const { sendMessage } = useAppStore.getState();
+
       await sendMessage('第一条消息');
       await sendMessage('第二条消息');
-      
+
       // Verify that the second call includes history from the first message
-      const secondCall = (chatApi.chatStream as jest.Mock).mock.calls[1];
+      const secondCall = (chatApi.sendMessageStream as jest.Mock).mock.calls[1];
       expect(secondCall[0].history).toHaveLength(2); // user + assistant from first message
     });
   });

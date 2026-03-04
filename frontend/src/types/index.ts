@@ -85,18 +85,18 @@ export interface AppState {
   // 当前会话
   currentSessionId: string | null;
   sessions: ChatSession[];
-  
+
   // 消息
   messages: ChatMessage[];
   isLoading: boolean;
-  
+
   // 设置
   useRag: boolean;
-  
+
   // 最近文件
   recentFiles: {id: string, name: string, type: string}[];
   addRecentFile: (file: {id: string, name: string, type: string}) => void;
-  
+
   // 操作
   sendMessage: (content: string) => Promise<void>;
   createNewSession: () => void;
@@ -107,3 +107,7 @@ export interface AppState {
   setUseRag: (use: boolean) => void;
   clearMessages: () => void;
 }
+
+// ==================== 组件类型 ====================
+
+export * from './components';

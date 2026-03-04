@@ -1,0 +1,72 @@
+/* App 容器 - Dock 布局 */
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f5f5f5;
+}
+
+/* 极简顶部栏 */
+.app-header {
+  height: 40px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 101;
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.85);
+  margin: 0;
+}
+
+/* 主内容区 */
+.app-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-top: 40px; /* 为固定的 header 留空间 */
+  padding-bottom: 60px; /* 为 Dock 导航留空间 */
+}
+
+/* 页面内容容器 */
+.page-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* 响应式适配 */
+@media (max-width: 768px) {
+  .app-content {
+    padding-bottom: 60px;
+  }
+
+  .page-container {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header {
+    height: 36px;
+  }
+
+  .app-title {
+    font-size: 14px;
+  }
+
+  .page-container {
+    padding: 12px;
+  }
+}

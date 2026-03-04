@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Spin, Switch, Tooltip, Card, Typography, Space, Button, Upload, Input, Badge, Drawer, Tag, message as antMessage, List } from 'antd';
+import { Spin, Tooltip, Card, Typography, Space, Button, Upload, Input, message as antMessage, List, Tag, Drawer } from 'antd';
 import { 
   ThunderboltOutlined, 
   DatabaseOutlined, 
@@ -10,7 +10,6 @@ import {
   PlusOutlined,
   ClearOutlined,
   UploadOutlined,
-  UnorderedListOutlined,
   FileOutlined,
 } from '@ant-design/icons';
 import ChatMessage from '../components/ChatMessage';
@@ -21,7 +20,6 @@ import { contentApi, agentApi } from '../services/api';
 const { Text, Title } = Typography;
 const { TextArea } = Input;
 
-// 文件类型图标映射
 const getFileIcon = (fileName: string) => {
   const ext = fileName.split('.').pop()?.toLowerCase();
   if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
@@ -37,7 +35,8 @@ const getFileIcon = (fileName: string) => {
 };
 
 const ChatPage: React.FC = () => {
-  const { messages, isLoading, sendMessage, createNewSession, clearMessages, addRecentFile } = useChatStore();
+  const { messages, ui, sendMessage, createNewSession, clearMessages, addRecentFile } = useChatStore();
+  const isLoading = ui.isLoading;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [useAgent, setUseAgent] = useState(false);
   const [useRag, setUseRag] = useState(true);
@@ -46,8 +45,6 @@ const ChatPage: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [taskDrawerVisible, setTaskDrawerVisible] = useState(false);
   const [runningTaskCount, setRunningTaskCount] = useState(0);
-  
-  // 已上传文件历史记录（当前会话）
   const [uploadedFilesHistory, setUploadedFilesHistory] = useState<Array<{
     id: string;
     name: string;
@@ -55,12 +52,10 @@ const ChatPage: React.FC = () => {
     uploadedAt: Date;
   }>>([]);
 
-  // 自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 定期检查运行中的任务数量
   useEffect(() => {
     if (!taskDrawerVisible) return;
     
@@ -70,7 +65,7 @@ const ChatPage: React.FC = () => {
         if (!response.ok) return;
         const data = await response.json();
         setRunningTaskCount(data.total || 0);
-      } catch (error) {
+      } catch {
         // 静默失败
       }
     };
@@ -80,15 +75,12 @@ const ChatPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [taskDrawerVisible]);
 
-  // 处理文件选择（不立即上传）
   const handleFileSelect = (file: File) => {
-    // 检查是否已选择
     if (selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
       antMessage.warning(`文件 "${file.name}" 已选择`);
       return false;
     }
     
-    // 限制最多5个文件
     if (selectedFiles.length >= 5) {
       antMessage.warning('最多只能选择5个文件');
       return false;
@@ -96,27 +88,23 @@ const ChatPage: React.FC = () => {
     
     setSelectedFiles(prev => [...prev, file]);
     antMessage.success(`已选择文件: ${file.name}`);
-    return false; // 阻止默认上传行为
+    return false;
   };
 
-  // 移除已选择的文件
   const removeSelectedFile = (index: number) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  // 清空所有选择的文件
   const clearSelectedFiles = () => {
     setSelectedFiles([]);
   };
 
-  // 统一发送消息和文件
   const handleSend = async () => {
     if ((!inputValue.trim() && selectedFiles.length === 0) || isLoading) return;
 
     const message = inputValue.trim();
     const files = [...selectedFiles];
     
-    // 清空输入
     setInputValue('');
     setSelectedFiles([]);
 
@@ -127,9 +115,7 @@ const ChatPage: React.FC = () => {
     }
   };
 
-  // 普通模式：发送消息和文件
   const sendMessageWithFiles = async (message: string, files: File[]) => {
-    // 如果有文件，先上传文件
     let uploadedFiles: { name: string; id: string; type: string }[] = [];
 
     if (files.length > 0) {
@@ -153,39 +139,29 @@ const ChatPage: React.FC = () => {
       setIsUploading(false);
     }
 
-    // 添加到上传历史记录和最近文件列表
     if (uploadedFiles.length > 0) {
       setUploadedFilesHistory(prev => [
         ...uploadedFiles.map(f => ({ ...f, uploadedAt: new Date() })),
         ...prev
-      ].slice(0, 20)); // 只保留最近20个
+      ].slice(0, 20));
       
-      // 添加到最近文件列表（用于上下文关联）
-      uploadedFiles.forEach(file => {
-        addRecentFile(file);
-      });
+      uploadedFiles.forEach(file => addRecentFile(file));
     }
 
-    // 构建完整的消息
     let fullMessage = message;
     if (uploadedFiles.length > 0) {
       const fileList = uploadedFiles.map(f => `"${f.name}"`).join('、');
-      if (message) {
-        fullMessage = `${message}\n\n[已上传文件: ${fileList}]`;
-      } else {
-        fullMessage = `请分析以下文件：${fileList}`;
-      }
+      fullMessage = message 
+        ? `${message}\n\n[已上传文件: ${fileList}]`
+        : `请分析以下文件：${fileList}`;
     }
 
-    // 发送消息
     await sendMessage(fullMessage);
   };
 
-  // Agent模式：发送任务和文件
   const sendAgentMessageWithFiles = async (message: string, files: File[]) => {
     const userMessageId = Date.now().toString();
     
-    // 显示用户消息（包含文件信息）
     let displayMessage = message || '请分析这些文件';
     if (files.length > 0) {
       const fileNames = files.map(f => f.name).join('、');
@@ -206,7 +182,6 @@ const ChatPage: React.FC = () => {
     }));
 
     try {
-      // 上传文件
       let uploadedFiles: { name: string; id: string; type: string }[] = [];
 
       if (files.length > 0) {
@@ -222,27 +197,21 @@ const ChatPage: React.FC = () => {
         setIsUploading(false);
       }
 
-      // 添加到上传历史记录和最近文件列表
       if (uploadedFiles.length > 0) {
         setUploadedFilesHistory(prev => [
           ...uploadedFiles.map(f => ({ ...f, uploadedAt: new Date() })),
           ...prev
         ].slice(0, 20));
         
-        // 添加到最近文件列表（用于上下文关联）
-        uploadedFiles.forEach(file => {
-          addRecentFile(file);
-        });
+        uploadedFiles.forEach(file => addRecentFile(file));
       }
 
-      // 构建Agent任务上下文
       const context = {
-        uploadedFiles: uploadedFiles,
-        useRag: useRag,
+        uploadedFiles,
+        useRag,
         task: message || '分析上传的文件',
       };
 
-      // 调用Agent API（流式）
       let fullResponse = '';
       
       await agentApi.executeTaskStream(
@@ -252,7 +221,7 @@ const ChatPage: React.FC = () => {
           useChatStore.setState((state) => {
             const messages = [...state.messages];
             const lastMessage = messages[messages.length - 1];
-            if (lastMessage && lastMessage.role === 'assistant') {
+            if (lastMessage?.role === 'assistant') {
               lastMessage.content = fullResponse;
             } else {
               messages.push({
@@ -271,7 +240,7 @@ const ChatPage: React.FC = () => {
       antMessage.error('Agent执行失败');
       console.error(error);
     } finally {
-      useChatStore.setState({ isLoading: false });
+      useChatStore.setState((state) => ({ ui: { ...state.ui, isLoading: false } }));
       setIsUploading(false);
     }
   };
@@ -283,101 +252,110 @@ const ChatPage: React.FC = () => {
     }
   };
 
-  // 快捷功能按钮
   const quickActions = [
     { icon: <FileImageOutlined />, label: '图片', color: '#52c41a', type: 'image', accept: '.jpg,.jpeg,.png,.gif' },
     { icon: <VideoCameraOutlined />, label: '视频', color: '#1890ff', type: 'video', accept: '.mp4,.avi,.mov,.wmv' },
     { icon: <FileTextOutlined />, label: '文档', color: '#fa8c16', type: 'document', accept: '.txt,.pdf,.docx,.doc,.md' },
   ];
 
+  const getPlaceholder = () => {
+    if (selectedFiles.length > 0) {
+      return useAgent 
+        ? '描述您希望如何处理这些文件...'
+        : '输入问题，AI将结合文件内容回答...';
+    }
+    return useAgent 
+      ? '输入任务描述，Agent将自动规划并执行...'
+      : '输入问题，AI将为您提供智能回答...';
+  };
+
   return (
     <div
       style={{
-        height: '100vh',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: '#f5f5f5',
         overflow: 'hidden',
       }}
     >
-      {/* 顶部工具栏 */}
       <div
         style={{
-          padding: '12px 24px',
+          padding: '8px 24px',
           backgroundColor: '#fff',
-          borderBottom: '1px solid #e8e8e8',
+          borderBottom: '1px solid #f0f0f0',
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'center',
           alignItems: 'center',
+          gap: 16,
           flexShrink: 0,
+          position: 'fixed',
+          top: 40,
+          left: 0,
+          right: 0,
+          zIndex: 99,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>💬 智能对话</h3>
-          
-          <Space size={24}>
-            <Tooltip title="Agent模式：AI将自动规划并执行多个步骤来完成复杂任务">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <ThunderboltOutlined style={{ color: useAgent ? '#faad14' : '#999' }} />
-                <span style={{ fontSize: 14, color: '#666' }}>Agent模式</span>
-                <Switch
-                  checked={useAgent}
-                  onChange={setUseAgent}
-                  size="small"
-                />
-              </div>
-            </Tooltip>
+        <Tooltip title="Agent模式：AI将自动规划并执行多个步骤来完成复杂任务">
+          <button
+            onClick={() => setUseAgent(!useAgent)}
+            style={{
+              padding: '4px 12px',
+              borderRadius: 4,
+              border: `1px solid ${useAgent ? '#1890ff' : '#d9d9d9'}`,
+              background: useAgent ? '#e6f7ff' : '#fff',
+              color: useAgent ? '#1890ff' : 'rgba(0,0,0,0.65)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 13,
+            }}
+          >
+            <ThunderboltOutlined />
+            Agent模式
+          </button>
+        </Tooltip>
 
-            <Tooltip title="RAG增强：使用向量检索增强回答">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <DatabaseOutlined style={{ color: useRag ? '#52c41a' : '#999' }} />
-                <span style={{ fontSize: 14, color: '#666' }}>RAG增强</span>
-                <Switch
-                  checked={useRag}
-                  onChange={setUseRag}
-                  size="small"
-                />
-              </div>
-            </Tooltip>
-          </Space>
-        </div>
+        <Tooltip title="RAG增强：使用向量检索增强回答">
+          <button
+            onClick={() => setUseRag(!useRag)}
+            style={{
+              padding: '4px 12px',
+              borderRadius: 4,
+              border: `1px solid ${useRag ? '#52c41a' : '#d9d9d9'}`,
+              background: useRag ? '#f6ffed' : '#fff',
+              color: useRag ? '#52c41a' : 'rgba(0,0,0,0.65)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 13,
+            }}
+          >
+            <DatabaseOutlined />
+            RAG增强
+          </button>
+        </Tooltip>
 
-        <Space>
-          <Button
-            icon={<UnorderedListOutlined />}
-            size="small"
-            onClick={() => setTaskDrawerVisible(true)}
-          >
-            任务
-            {runningTaskCount > 0 && (
-              <Badge 
-                count={runningTaskCount} 
-                style={{ 
-                  backgroundColor: '#1890ff',
-                  marginLeft: 4,
-                }} 
-              />
-            )}
-          </Button>
-          <Button
-            icon={<PlusOutlined />}
-            size="small"
-            onClick={createNewSession}
-          >
-            新对话
-          </Button>
-          <Button
-            icon={<ClearOutlined />}
-            size="small"
-            onClick={clearMessages}
-            danger
-          >
-            清空
-          </Button>
-        </Space>
+        <Button
+          icon={<PlusOutlined />}
+          size="small"
+          onClick={createNewSession}
+          style={{ marginLeft: 'auto' }}
+        >
+          新对话
+        </Button>
+        <Button
+          icon={<ClearOutlined />}
+          size="small"
+          onClick={clearMessages}
+          danger
+        >
+          清空
+        </Button>
       </div>
 
-      {/* 主内容区 */}
       <div
         style={{
           flex: 1,
@@ -385,37 +363,35 @@ const ChatPage: React.FC = () => {
           flexDirection: 'column',
           overflow: 'hidden',
           position: 'relative',
+          marginTop: 49,
         }}
       >
-        {/* 消息列表区域 */}
         <div
           style={{
             flex: 1,
-            overflowY: 'auto',
+            overflowY: messages.length > 0 ? 'auto' : 'hidden',
             padding: '24px',
             display: 'flex',
             flexDirection: 'column',
           }}
         >
           {messages.length === 0 ? (
-            /* 空状态 */
             <div
               style={{
                 flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'center',
+                justifyContent: 'flex-start',
                 alignItems: 'center',
-                paddingBottom: '10vh',
+                paddingTop: '15vh',
+                overflow: 'hidden',
               }}
             >
               <Title level={3} style={{ marginBottom: 48, color: '#333' }}>
                 👋 你好，我是AI助手
               </Title>
               
-              {/* 输入框容器 */}
               <div style={{ width: '100%', maxWidth: 720 }}>
-                {/* 已选择文件显示区域 */}
                 {selectedFiles.length > 0 && (
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -440,7 +416,6 @@ const ChatPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* 输入框 */}
                 <Card
                   style={{
                     borderRadius: 16,
@@ -452,15 +427,7 @@ const ChatPage: React.FC = () => {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={
-                      selectedFiles.length > 0
-                        ? (useAgent 
-                          ? '描述您希望如何处理这些文件...'
-                          : '输入问题，AI将结合文件内容回答...')
-                        : (useAgent 
-                          ? '输入任务描述，Agent将自动规划并执行...'
-                          : '输入问题，AI将为您提供智能回答...')
-                    }
+                    placeholder={getPlaceholder()}
                     autoSize={{ minRows: 2, maxRows: 4 }}
                     bordered={false}
                     style={{ 
@@ -469,7 +436,6 @@ const ChatPage: React.FC = () => {
                     }}
                   />
                   
-                  {/* 底部工具栏 */}
                   <div
                     style={{
                       display: 'flex',
@@ -480,7 +446,6 @@ const ChatPage: React.FC = () => {
                       borderTop: '1px solid #f0f0f0',
                     }}
                   >
-                    {/* 左侧上传按钮 */}
                     <Upload
                       beforeUpload={handleFileSelect}
                       showUploadList={false}
@@ -498,7 +463,6 @@ const ChatPage: React.FC = () => {
                       </Button>
                     </Upload>
 
-                    {/* 右侧发送按钮 */}
                     <Button
                       type="primary"
                       shape="circle"
@@ -515,7 +479,6 @@ const ChatPage: React.FC = () => {
                   </div>
                 </Card>
 
-                {/* 快捷功能区 */}
                 <div
                   style={{
                     display: 'flex',
@@ -579,7 +542,6 @@ const ChatPage: React.FC = () => {
               </div>
             </div>
           ) : (
-            /* 有消息时 - 消息列表 */
             <div style={{ maxWidth: 900, margin: '0 auto', width: '100%' }}>
               {messages.map((message) => (
                 <ChatMessage key={message.id} message={message} />
@@ -594,7 +556,6 @@ const ChatPage: React.FC = () => {
           )}
         </div>
 
-        {/* 有消息时的底部输入框 */}
         {messages.length > 0 && (
           <div
             style={{
@@ -605,7 +566,6 @@ const ChatPage: React.FC = () => {
             }}
           >
             <div style={{ maxWidth: 900, margin: '0 auto' }}>
-              {/* 已选择文件显示 */}
               {selectedFiles.length > 0 && (
                 <div style={{ marginBottom: 8 }}>
                   <Space wrap>
@@ -632,24 +592,53 @@ const ChatPage: React.FC = () => {
                 bodyStyle={{ padding: '12px 16px' }}
               >
                 <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
-                  <TextArea
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={
-                      selectedFiles.length > 0
-                        ? '描述您希望如何处理这些文件...'
-                        : '输入问题...'
-                    }
-                    autoSize={{ minRows: 1, maxRows: 4 }}
-                    bordered={false}
-                    style={{ flex: 1, resize: 'none' }}
-                  />
-                  <Space>
+                  <Space size={4}>
                     <Upload
                       beforeUpload={handleFileSelect}
                       showUploadList={false}
-                      accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.avi,.mov"
+                      accept=".jpg,.jpeg,.png,.gif,.webp"
+                      disabled={isUploading || selectedFiles.length >= 5}
+                    >
+                      <Button 
+                        type="text" 
+                        icon={<FileImageOutlined />}
+                        disabled={selectedFiles.length >= 5}
+                        style={{ color: '#52c41a' }}
+                        title="上传图片"
+                      />
+                    </Upload>
+                    <Upload
+                      beforeUpload={handleFileSelect}
+                      showUploadList={false}
+                      accept=".mp4,.avi,.mov,.mkv"
+                      disabled={isUploading || selectedFiles.length >= 5}
+                    >
+                      <Button 
+                        type="text" 
+                        icon={<VideoCameraOutlined />}
+                        disabled={selectedFiles.length >= 5}
+                        style={{ color: '#1890ff' }}
+                        title="上传视频"
+                      />
+                    </Upload>
+                    <Upload
+                      beforeUpload={handleFileSelect}
+                      showUploadList={false}
+                      accept=".txt,.pdf,.docx,.doc,.md"
+                      disabled={isUploading || selectedFiles.length >= 5}
+                    >
+                      <Button 
+                        type="text" 
+                        icon={<FileTextOutlined />}
+                        disabled={selectedFiles.length >= 5}
+                        style={{ color: '#fa8c16' }}
+                        title="上传文档"
+                      />
+                    </Upload>
+                    <Upload
+                      beforeUpload={handleFileSelect}
+                      showUploadList={false}
+                      accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.avi,.mov,.zip,.rar"
                       disabled={isUploading || selectedFiles.length >= 5}
                       multiple
                     >
@@ -657,18 +646,30 @@ const ChatPage: React.FC = () => {
                         type="text" 
                         icon={<UploadOutlined />}
                         disabled={selectedFiles.length >= 5}
+                        title="上传任意文件"
                       />
                     </Upload>
-                    <Button
-                      type="primary"
-                      icon={<SendOutlined />}
-                      onClick={handleSend}
-                      loading={isLoading || isUploading}
-                      disabled={!inputValue.trim() && selectedFiles.length === 0}
-                    >
-                      发送
-                    </Button>
                   </Space>
+                  
+                  <div style={{ width: 1, height: 24, background: '#f0f0f0', margin: '0 4px' }} />
+                  
+                  <TextArea
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={selectedFiles.length > 0 ? '描述您希望如何处理这些文件...' : '输入问题...'}
+                    autoSize={{ minRows: 1, maxRows: 4 }}
+                    bordered={false}
+                    style={{ flex: 1, resize: 'none' }}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    onClick={handleSend}
+                    loading={isLoading || isUploading}
+                    disabled={!inputValue.trim() && selectedFiles.length === 0}
+                    shape="circle"
+                  />
                 </div>
               </Card>
             </div>
@@ -676,7 +677,6 @@ const ChatPage: React.FC = () => {
         )}
       </div>
 
-      {/* 已上传文件历史记录 */}
       {uploadedFilesHistory.length > 0 && (
         <Card
           title={
@@ -689,8 +689,8 @@ const ChatPage: React.FC = () => {
           }
           style={{
             position: 'fixed',
-            bottom: 24,
-            left: 280,
+            bottom: 80,
+            right: 24,
             width: 320,
             maxHeight: 400,
             overflow: 'auto',
@@ -708,7 +708,6 @@ const ChatPage: React.FC = () => {
                     type="link"
                     size="small"
                     onClick={() => {
-                      // 根据文件类型跳转到相应页面
                       if (file.type === 'IMAGE') {
                         window.open(`/images?id=${file.id}`, '_blank');
                       } else if (file.type === 'VIDEO') {
@@ -744,7 +743,6 @@ const ChatPage: React.FC = () => {
         </Card>
       )}
 
-      {/* 任务监控抽屉 */}
       <Drawer
         title="任务监控"
         placement="right"
