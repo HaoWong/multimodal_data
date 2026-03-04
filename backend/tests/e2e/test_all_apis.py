@@ -90,7 +90,12 @@ class TestAllAPIs:
         """测试获取会话列表"""
         response = client.get("/api/chat/sessions?limit=10")
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        # 现在返回统一响应格式 {success, data, message}
+        assert isinstance(data, dict)
+        assert data.get("success") is True
+        assert "data" in data
+        assert isinstance(data["data"], list)
 
     # ==================== Skills API ====================
     def test_skills_list(self, client: TestClient):

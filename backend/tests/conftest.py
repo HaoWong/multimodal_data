@@ -47,33 +47,41 @@ def db_session(engine):
     # 创建所有表（如果不存在）
     Base.metadata.create_all(bind=engine)
     
-    # 创建会话
+    # 创建会话 - 不使用嵌套事务，直接创建新连接
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
-    
-    # 开始嵌套事务（保存点）
-    nested = session.begin_nested()
     
     try:
         yield session
     finally:
-        # 回滚嵌套事务，撤销测试期间的所有更改
-        nested.rollback()
+        # 回滚事务，撤销测试期间的所有更改
+        try:
+            session.rollback()
+        except:
+            pass
         session.close()
 
 
 @pytest.fixture(scope="function")
-def client(db_session):
-    """创建FastAPI测试客户端"""
+def client(engine):
+    """创建FastAPI测试客户端 - 每个测试独立数据库连接"""
     from app.main import app
     from app.core.database import get_db
+    
+    # 创建新的会话
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = SessionLocal()
     
     # 覆盖get_db依赖
     def override_get_db():
         try:
-            yield db_session
+            yield session
         finally:
-            pass
+            try:
+                session.rollback()
+            except:
+                pass
+            session.close()
     
     app.dependency_overrides[get_db] = override_get_db
     
@@ -82,6 +90,11 @@ def client(db_session):
     
     # 清理依赖覆盖
     app.dependency_overrides.clear()
+    try:
+        session.rollback()
+        session.close()
+    except:
+        pass
 
 
 @pytest.fixture
